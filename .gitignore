@@ -1,0 +1,8 @@
+# Object files
+*.o
+*.exe
+*.out
+
+# Executables
+sensor
+server
