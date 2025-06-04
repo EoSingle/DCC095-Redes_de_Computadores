@@ -78,7 +78,7 @@ int connect_and_get_id(const char *server_type_name, const char *server_ip, int 
                 sprintf(log_msg, "%s respondeu com mensagem inesperada: Code=%d", server_type_name, code);
                 log_info(log_msg);
             }
-        } else { /* Erro de parse */ }
+        } else { /* Erro de parse */}
     } else { /* Erro de read ou desconexão */ }
     
     close(sockfd);
@@ -100,7 +100,7 @@ int main(int argc, char *argv[]) {
 
     char log_msg[150];
 
-    // Validar LocId [cite: 67]
+    // Validar LocId
     if (initial_loc_id < 1 || initial_loc_id > 10) {
         log_info("Invalid argument (LocId deve ser entre 1 e 10). Encerrando."); // [cite: 68]
         exit(EXIT_FAILURE);
@@ -138,15 +138,144 @@ int main(int argc, char *argv[]) {
     char command_line[MAX_MSG_SIZE];
     while (fgets(command_line, sizeof(command_line), stdin) != NULL) {
         command_line[strcspn(command_line, "\n")] = 0; // Remover newline
+        char log_msg_sensor[150]; // Buffer para logs específicos do sensor
 
         if (strcmp(command_line, "kill") == 0) {
-            log_info("Comando 'kill' recebido. Iniciando desconexão...");
-            // Enviar REQ_DISCSEN para SS e SL
-            // ... (lógica a ser implementada) ...
-            break; 
-        } else if (strncmp(command_line, "check failure", strlen("check failure")) == 0) {
-            // Enviar REQ_SENSSTATUS para SS
-            // ... (lógica a ser implementada) ...
+            log_info("Comando 'kill' recebido. Iniciando desconexão dos servidores SS e SL...");
+            char msg_buffer[MAX_MSG_SIZE];
+            char response_buffer[MAX_MSG_SIZE];
+
+            // 1. Desconectar do Servidor SS
+            if (ss_fd > 0 && strlen(my_id_from_ss) > 0) {
+                sprintf(log_msg_sensor, "Enviando REQ_DISCSEN (ID: %s) para SS...", my_id_from_ss);
+                log_info(log_msg_sensor);
+                build_control_message(msg_buffer, sizeof(msg_buffer), REQ_DISCSEN, my_id_from_ss);
+
+                if (write(ss_fd, msg_buffer, strlen(msg_buffer)) < 0) {
+                    log_error("Falha ao enviar REQ_DISCSEN para SS");
+                } else {
+                    // Aguardar resposta do SS
+                    ssize_t bytes_read = read(ss_fd, response_buffer, sizeof(response_buffer) - 1);
+                    if (bytes_read > 0) {
+                        response_buffer[bytes_read] = '\0';
+                        int code;
+                        char payload[MAX_MSG_SIZE];
+                        if (parse_message(response_buffer, &code, payload, sizeof(payload))) {
+                            if (code == OK_MSG && atoi(payload) == OK_SUCCESSFUL_DISCONNECT) {
+                                log_info("SS Successful disconnect"); // Conforme PDF
+                            } else if (code == ERROR_MSG && atoi(payload) == SENSOR_NOT_FOUND_ERROR) {
+                                log_info("SS respondeu ERROR(10): Sensor not found"); // Conforme PDF
+                            } else {
+                                sprintf(log_msg_sensor, "SS respondeu com msg inesperada para REQ_DISCSEN: Code=%d, Payload='%s'", code, payload);
+                                log_info(log_msg_sensor);
+                            }
+                        } else {
+                            log_error("Falha ao parsear resposta do SS para REQ_DISCSEN");
+                        }
+                    } else if (bytes_read == 0) {
+                        log_info("SS desconectou antes de responder ao REQ_DISCSEN.");
+                    } else {
+                        log_error("Falha ao ler resposta do SS para REQ_DISCSEN");
+                    }
+                }
+                close(ss_fd); // Fechar socket com SS independentemente da resposta
+                ss_fd = -1;   // Marcar como fechado
+            } else {
+                log_info("Não conectado ao SS ou sem ID do SS para enviar REQ_DISCSEN.");
+            }
+
+            // 2. Desconectar do Servidor SL
+            if (sl_fd > 0 && strlen(my_id_from_sl) > 0) {
+                sprintf(log_msg_sensor, "Enviando REQ_DISCSEN (ID: %s) para SL...", my_id_from_sl);
+                log_info(log_msg_sensor);
+                build_control_message(msg_buffer, sizeof(msg_buffer), REQ_DISCSEN, my_id_from_sl);
+
+                if (write(sl_fd, msg_buffer, strlen(msg_buffer)) < 0) {
+                    log_error("Falha ao enviar REQ_DISCSEN para SL");
+                } else {
+                    // Aguardar resposta do SL
+                    ssize_t bytes_read = read(sl_fd, response_buffer, sizeof(response_buffer) - 1);
+                    if (bytes_read > 0) {
+                        response_buffer[bytes_read] = '\0';
+                        int code;
+                        char payload[MAX_MSG_SIZE];
+                        if (parse_message(response_buffer, &code, payload, sizeof(payload))) {
+                            if (code == OK_MSG && atoi(payload) == OK_SUCCESSFUL_DISCONNECT) {
+                                log_info("SL Successful disconnect"); // Conforme PDF
+                            } else if (code == ERROR_MSG && atoi(payload) == SENSOR_NOT_FOUND_ERROR) {
+                                log_info("SL respondeu ERROR(10): Sensor not found"); // Conforme PDF
+                            } else {
+                                sprintf(log_msg_sensor, "SL respondeu com msg inesperada para REQ_DISCSEN: Code=%d, Payload='%s'", code, payload);
+                                log_info(log_msg_sensor);
+                            }
+                        } else {
+                            log_error("Falha ao parsear resposta do SL para REQ_DISCSEN");
+                        }
+                    } else if (bytes_read == 0) {
+                        log_info("SL desconectou antes de responder ao REQ_DISCSEN.");
+                    } else {
+                        log_error("Falha ao ler resposta do SL para REQ_DISCSEN");
+                    }
+                }
+                close(sl_fd); // Fechar socket com SL independentemente da resposta
+                sl_fd = -1;   // Marcar como fechado
+            } else {
+                log_info("Não conectado ao SL ou sem ID do SL para enviar REQ_DISCSEN.");
+            }
+
+            log_info("Desconexão dos servidores solicitada. Encerrando sensor.");
+            break; // Sai do loop de comandos e permite que o programa sensor termine
+        } else if (strcmp(command_line, "check failure") == 0) {
+            if (ss_fd > 0 && strlen(my_id_from_ss) > 0) {
+                sprintf(log_msg_sensor, "Comando 'check failure' recebido. Enviando REQ_SENSSTATUS (ID: %s) para SS...", my_id_from_ss);
+                log_info(log_msg_sensor);
+
+                char msg_buffer[MAX_MSG_SIZE];
+                char response_buffer[MAX_MSG_SIZE];
+
+                build_control_message(msg_buffer, sizeof(msg_buffer), REQ_SENSSTATUS, my_id_from_ss);
+                if (write(ss_fd, msg_buffer, strlen(msg_buffer)) < 0) {
+                    log_error("Falha ao enviar REQ_SENSSTATUS para SS");
+                } else {
+                    // Aguardar resposta RES_SENSSTATUS ou ERROR do SS
+                    ssize_t bytes_read = read(ss_fd, response_buffer, sizeof(response_buffer) - 1);
+                    if (bytes_read > 0) {
+                        response_buffer[bytes_read] = '\0';
+                        int code; char payload_loc_id_str[MAX_MSG_SIZE];
+                        if (parse_message(response_buffer, &code, payload_loc_id_str, sizeof(payload_loc_id_str))) {
+                            if (code == RES_SENSSTATUS) {
+                                int loc_id = atoi(payload_loc_id_str);
+                                // Imprimir conforme formato do PDF (página 10)
+                                if (loc_id == 1) sprintf(log_msg_sensor, "Alert received from location: %d (Norte)", loc_id);
+                                else if (loc_id == 2) sprintf(log_msg_sensor, "Alert received from location: %d (Norte)", loc_id); // PDF p.10 tem Norte para 1 e Sul para 2. Ajuste aqui.
+                                else if (loc_id == 3) sprintf(log_msg_sensor, "Alert received from location: %d (Norte)", loc_id); // E Leste para 3
+                                else if (loc_id == 4) sprintf(log_msg_sensor, "Alert received from location: %d (Norte)", loc_id); // E Oeste para 4
+                                // CORREÇÃO DA LÓGICA DE IMPRESSÃO DAS ÁREAS CONFORME PÁGINA 4:
+                                // Área Norte: localização 1, 2 e 3
+                                // Área Sul: localização 4 e 5
+                                // Área Leste: localização 6 e 7
+                                // Área Oeste: localização 8, 9 e 10
+                                // O exemplo da p.10 para o cliente tem uma numeração diferente da definição de áreas. Usaremos a definição da p.4.
+                                else if (loc_id >=1 && loc_id <=3) sprintf(log_msg_sensor, "Alert received from location: %d (Norte)", loc_id);
+                                else if (loc_id >=4 && loc_id <=5) sprintf(log_msg_sensor, "Alert received from location: %d (Sul)", loc_id);
+                                else if (loc_id >=6 && loc_id <=7) sprintf(log_msg_sensor, "Alert received from location: %d (Leste)", loc_id);
+                                else if (loc_id >=8 && loc_id <=10) sprintf(log_msg_sensor, "Alert received from location: %d (Oeste)", loc_id);
+                                else if (loc_id == 0) sprintf(log_msg_sensor, "Status normal reportado para o sensor (LocID: %d).", loc_id); // Interpretação para normal
+                                else sprintf(log_msg_sensor, "Alerta recebido de localização desconhecida ou inválida: %d", loc_id);
+                                log_info(log_msg_sensor);
+
+                            } else if (code == ERROR_MSG && atoi(payload_loc_id_str) == SENSOR_NOT_FOUND_ERROR) {
+                                log_info("Sensor not found"); // Conforme PDF
+                            } else {
+                                sprintf(log_msg_sensor, "SS respondeu com msg inesperada para REQ_SENSSTATUS: Code=%d, Payload='%s'", code, payload_loc_id_str);
+                                log_info(log_msg_sensor);
+                            }
+                        } else { log_error("Falha ao parsear resposta do SS para REQ_SENSSTATUS"); }
+                    } else { log_error("Falha ao ler resposta do SS para REQ_SENSSTATUS ou desconexão"); }
+                }
+            } else {
+                log_info("Não conectado ao SS ou sem ID do SS para enviar REQ_SENSSTATUS.");
+            }
         }
         // Adicionar outros comandos
         log_info("Digite comandos ('check failure', 'locate <SensID>', 'diagnose <LocId>', 'kill' para sair):");

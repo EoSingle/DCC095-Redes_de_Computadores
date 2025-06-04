@@ -13,11 +13,7 @@
 #define SERVER_BACKLOG 5 // Número de conexões pendentes que o listen pode enfileirar
 #define MAX_PIDS_LENGTH 50 // Tamanho máximo para um PidS
 
-#define OK_MSG 0
-#define OK_SUCCESSFUL_DISCONNECT 1
-#define OK_SUCCESSFUL_CREATE 2
-#define OK_SUCCESSFUL_UPDATE 3
-
+// Mensagens de controle
 #define REQ_CONNPEER 20
 #define RES_CONNPEER 21
 #define REQ_DISCPEER 22
@@ -25,15 +21,21 @@
 #define RES_CONNSEN 24
 #define REQ_DISCSEN 25
 
+// Mensagens de dados
 #define REQ_CHECKALERT 36
 #define RES_CHECKALERT 37
 #define REQ_SENSLOC 38
 #define RES_SENSLOC 39
 #define REQ_SENSSTATUS 40
 #define RES_SENSSTATUS 41
-#define REQ_LOCLIST 40
-#define RES_LOCLIST 41
+#define REQ_LOCLIST 42
+#define RES_LOCLIST 43
 
+// Mensagens de erro ou Confirmação
+#define OK_MSG 0
+#define OK_SUCCESSFUL_DISCONNECT 1
+#define OK_SUCCESSFUL_CREATE 2
+#define OK_SUCCESSFUL_UPDATE 3
 #define ERROR_MSG 255
 
 #define PEER_NOT_FOUND_ERROR 2

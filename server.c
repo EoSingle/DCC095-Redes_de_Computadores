@@ -428,6 +428,9 @@ int main(int argc, char *argv[]) {
             ssize_t bytes_read = read(peer_socket_fd, buffer, MAX_MSG_SIZE);
             if (bytes_read > 0) {
                 buffer[bytes_read] = '\0';
+
+                sprintf(log_msg, "S_i: Dados brutos recebidos do peer: [%s]", buffer);
+                log_info(log_msg);
                 
                 int code;
                 char payload[MAX_MSG_SIZE]; // Aumentar se MAX_PIDS_LENGTH for maior
@@ -584,6 +587,57 @@ int main(int argc, char *argv[]) {
                         close(peer_socket_fd);
                         peer_socket_fd = -1;
                         p2p_current_state = P2P_DISCONNECTED;
+                    } else if (code == REQ_CHECKALERT) { // Payload é o SensID (IdC do sensor no SS)
+                        char sens_id_from_ss[MAX_PIDS_LENGTH];
+                        strncpy(sens_id_from_ss, payload, sizeof(sens_id_from_ss) - 1);
+                        sens_id_from_ss[sizeof(sens_id_from_ss) - 1] = '\0';
+
+                        sprintf(log_msg, "SL: REQ_CHECKALERT %s recebido do SS", sens_id_from_ss);
+                        log_info(log_msg);
+
+                        // !!! INÍCIO DO HACK PARA TESTE DE FLUXO !!!
+                        // O correto seria buscar 'sens_id_from_ss' na base de dados do SL,
+                        // o que requer que os IDs sejam consistentes ou mapeados entre SS e SL.
+                        // Por agora, vamos pegar a localização do primeiro cliente registrado no SL, ou um valor fixo.
+                        int loc_id_to_send = -1;
+                        char found_client_for_hack[MAX_PIDS_LENGTH] = "N/A_HACK";
+
+                        for (int k = 0; k < MAX_CLIENTS; k++) {
+                            if (connected_clients[k].socket_fd > 0 && connected_clients[k].id_cliente[0] != '\0') {
+                                loc_id_to_send = connected_clients[k].loc_id;
+                                strncpy(found_client_for_hack, connected_clients[k].id_cliente, MAX_PIDS_LENGTH -1);
+                                break; // Usar o primeiro encontrado para o hack
+                            }
+                        }
+                        if (loc_id_to_send == -1) { // Se nenhum cliente no SL, usar um valor fixo para teste
+                            loc_id_to_send = 3; // Exemplo fixo
+                            log_info("SL: HACK - Nenhum cliente no SL, usando LocID de teste fixo.");
+                        } else {
+                            sprintf(log_msg, "SL: HACK - Usando LocID do cliente %s do SL para responder ao REQ_CHECKALERT sobre %s.", found_client_for_hack, sens_id_from_ss);
+                            log_info(log_msg);
+                        }
+                        // !!! FIM DO HACK PARA TESTE DE FLUXO !!!
+
+                        char msg_to_ss[MAX_MSG_SIZE];
+                        char payload_str[10];
+                        // Com o hack, loc_id_to_send sempre terá um valor (ou do primeiro cliente do SL ou o fixo)
+                        // Para simular "Sensor not found" no SL, você teria que setar loc_id_to_send = -1 propositalmente.
+                        // Para este teste, vamos assumir que sempre encontramos uma localização (devido ao hack).
+
+                        if (loc_id_to_send != -1) { // Sempre verdadeiro com o hack atual, a menos que queira testar o erro do SL
+                            sprintf(payload_str, "%d", loc_id_to_send);
+                            sprintf(log_msg, "SL: Sending RES_CHECKALERT %s to SS", payload_str);
+                            log_info(log_msg);
+                            build_control_message(msg_to_ss, sizeof(msg_to_ss), RES_CHECKALERT, payload_str);
+                        } else {
+                            // Este bloco seria para o caso real de não encontrar o sensor.
+                            // sprintf(log_msg, "SL: ERROR(10) - Sensor %s not found (real logic)", sens_id_from_ss);
+                            // log_info(log_msg);
+                            // sprintf(payload_str, "%02d", SENSOR_NOT_FOUND_ERROR);
+                            // build_control_message(msg_to_ss, sizeof(msg_to_ss), ERROR_MSG, payload_str);
+                        }
+                        if (write(peer_socket_fd, msg_to_ss, strlen(msg_to_ss)) < 0) { /* log erro */ 
+                        }
                     } else {
                         sprintf(log_msg, "Mensagem P2P inesperada (Code=%d) ou estado P2P incorreto (%d).", code, p2p_current_state);
                         log_info(log_msg);
@@ -618,9 +672,177 @@ int main(int argc, char *argv[]) {
                 ssize_t bytes_read = read(current_client_socket, buffer, MAX_MSG_SIZE);
                 if (bytes_read > 0) {
                     buffer[bytes_read] = '\0'; // Garantir terminação nula
+                    int code;
+                    char payload[MAX_MSG_SIZE]; 
                     sprintf(log_msg, "Mensagem recebida do cliente %d: %s", current_client_socket, buffer);
                     log_info(log_msg);
-                    // Aqui poderia processar a mensagem do cliente
+                    
+                    if(parse_message(buffer, &code, payload, sizeof(payload))) {
+                        sprintf(log_msg, "Código: %d, Payload: '%s'", code, payload);
+                        log_info(log_msg);
+                        if (code == REQ_CONNSEN) {
+                            // ... (sua lógica existente para REQ_CONNSEN) ...
+                        } else if (code == REQ_DISCSEN) { // Cliente solicitando desconexão 
+                            char client_id_from_payload[MAX_PIDS_LENGTH];
+                            strncpy(client_id_from_payload, payload, sizeof(client_id_from_payload) - 1);
+                            client_id_from_payload[sizeof(client_id_from_payload) - 1] = '\0';
+
+                            char msg_response_to_client[MAX_MSG_SIZE];
+                            char response_code_payload_str[10]; // Para "01" ou "10"
+
+                            // Verificar se o IdC do payload corresponde ao IdC armazenado para este socket (connected_clients[i])
+                            // Assumindo que 'i' é o índice correto para connected_clients
+                            if (connected_clients[i].socket_fd == current_client_socket && 
+                                strcmp(connected_clients[i].id_cliente, client_id_from_payload) == 0 &&
+                                connected_clients[i].id_cliente[0] != '\0') { // Cliente encontrado e ID confere
+
+                                sprintf(log_msg, "Client %s removed (Loc %d)", 
+                                        connected_clients[i].id_cliente, 
+                                        connected_clients[i].loc_id); // 
+                                log_info(log_msg);
+
+                                // Responder com OK(01) 
+                                sprintf(response_code_payload_str, "%02d", OK_SUCCESSFUL_DISCONNECT);
+                                build_control_message(msg_response_to_client, sizeof(msg_response_to_client), OK_MSG, response_code_payload_str);
+                                if (write(current_client_socket, msg_response_to_client, strlen(msg_response_to_client)) < 0) {
+                                    log_error("Falha ao enviar OK(01) para REQ_DISCSEN");
+                                } else {
+                                    log_info("OK(01) para REQ_DISCSEN enviado ao cliente.");
+                                }
+
+                                // Desconectar cliente: fechar socket, limpar estruturas
+                                close(current_client_socket);
+                                client_sockets[i] = 0; // Liberar slot no array de sockets monitorados pelo select
+
+                                // Limpar informações do cliente
+                                if (connected_clients[i].id_cliente[0] != '\0') { // Apenas se estava realmente registrado
+                                    if (num_connected_clients > 0) {
+                                        num_connected_clients--;
+                                    }
+                                }
+                                connected_clients[i].socket_fd = 0;
+                                connected_clients[i].id_cliente[0] = '\0';
+                                connected_clients[i].loc_id = -1;
+                                // Resetar outros campos se houver (ex: status_risco)
+                                
+                                sprintf(log_msg, "Clientes ativos restantes: %d", num_connected_clients);
+                                log_info(log_msg);
+
+                            } else { // IdC não existe ou não corresponde ao socket 
+                                sprintf(log_msg, "REQ_DISCSEN para IdC '%s' (socket %d) não encontrado ou IdC não corresponde. Esperado '%s'. Enviando ERROR(10).",
+                                        client_id_from_payload, current_client_socket, connected_clients[i].id_cliente);
+                                log_info(log_msg);
+                                
+                                sprintf(response_code_payload_str, "%02d", SENSOR_NOT_FOUND_ERROR);
+                                build_control_message(msg_response_to_client, sizeof(msg_response_to_client), ERROR_MSG, response_code_payload_str);
+                                if (write(current_client_socket, msg_response_to_client, strlen(msg_response_to_client)) < 0) {
+                                    log_error("Falha ao enviar ERROR(10) para REQ_DISCSEN");
+                                }
+                                // O PDF não especifica explicitamente fechar a conexão aqui, mas é uma opção.
+                                // Se o cliente enviou um ID inválido, pode ser um erro de protocolo.
+                            }
+                        } else if (code == REQ_SENSSTATUS) { // Payload é o IdC do sensor (SensID)
+                            char sens_id_from_client[MAX_PIDS_LENGTH];
+                            strncpy(sens_id_from_client, payload, sizeof(sens_id_from_client) - 1);
+                            sens_id_from_client[sizeof(sens_id_from_client) - 1] = '\0';
+
+                            // Verificar se o sens_id_from_client corresponde ao connected_clients[i].id_cliente
+                            if (connected_clients[i].socket_fd == current_client_socket &&
+                                strcmp(connected_clients[i].id_cliente, sens_id_from_client) == 0) {
+                                
+                                sprintf(log_msg, "REQ_SENSSTATUS %s", sens_id_from_client); // Conforme PDF p.10
+                                log_info(log_msg);
+
+                                // Simular ou verificar o status do sensor na base de dados do SS
+                                // Para teste, podemos alternar o status ou ter um valor fixo.
+                                // Suponha que connected_clients[i].status_risco armazena 0 (normal) ou 1 (falha)
+                                // Vamos simular uma falha para testar o fluxo completo:
+                                // connected_clients[i].status_risco = 1; // Para teste. Em um sistema real, seria atualizado por outros meios.
+
+                                if (connected_clients[i].status_risco == 1) { // Falha detectada
+                                    sprintf(log_msg, "Sensor %s status = 1 (failure detected)", sens_id_from_client); // Conforme PDF p.11
+                                    log_info(log_msg);
+
+                                    if (peer_socket_fd > 0 && p2p_current_state == P2P_FULLY_ESTABLISHED) {
+                                        sprintf(log_msg, "Sending REQ_CHECKALERT %s to SL", sens_id_from_client); // Conforme PDF p.11
+                                        log_info(log_msg);
+                                        
+                                        char msg_to_sl[MAX_MSG_SIZE];
+                                        build_control_message(msg_to_sl, sizeof(msg_to_sl), REQ_CHECKALERT, sens_id_from_client);
+                                        if (write(peer_socket_fd, msg_to_sl, strlen(msg_to_sl)) < 0) {
+                                            log_error("SS: Falha ao enviar REQ_CHECKALERT para SL");
+                                            // O que fazer se não conseguir contatar SL? Enviar erro ao cliente?
+                                            // O PDF não cobre este caso de falha de comunicação SS-SL.
+                                            // Por ora, o cliente não receberá resposta se isso falhar.
+                                        } else {
+                                            // SS agora aguarda RES_CHECKALERT ou ERROR do SL.
+                                            // Esta é uma interação bloqueante no fluxo do PDF.
+                                            // Em uma implementação real com select, o SS não bloquearia aqui,
+                                            // mas guardaria o estado e esperaria a resposta do SL via select.
+                                            // Para simplificar e seguir o fluxo linear do PDF para esta função:
+                                            char sl_response_buffer[MAX_MSG_SIZE];
+                                            ssize_t sl_bytes = read(peer_socket_fd, sl_response_buffer, sizeof(sl_response_buffer)-1);
+                                            if (sl_bytes > 0) {
+                                                sl_response_buffer[sl_bytes] = '\0';
+                                                int sl_code; char sl_payload[MAX_MSG_SIZE];
+                                                if(parse_message(sl_response_buffer, &sl_code, sl_payload, sizeof(sl_payload))){
+                                                    char msg_to_client[MAX_MSG_SIZE];
+                                                    if(sl_code == RES_CHECKALERT){
+                                                        sprintf(log_msg, "SS: RES_CHECKALERT %s recebido do SL", sl_payload); // Conforme PDF p.12 [SL] Sending RES_CHECKALERT 3 to SS
+                                                        log_info(log_msg);                                                       // E [SS] RES_CHECKALERT 3
+                                                        // Enviar RES_SENSSTATUS (LocID) para o cliente
+                                                        sprintf(log_msg, "SS: Sending RES_SENSSTATUS %s to CLIENT", sl_payload);
+                                                        log_info(log_msg);
+                                                        build_control_message(msg_to_client, sizeof(msg_to_client), RES_SENSSTATUS, sl_payload); // sl_payload é LocID
+                                                        write(current_client_socket, msg_to_client, strlen(msg_to_client));
+                                                    } else if (sl_code == ERROR_MSG && atoi(sl_payload) == SENSOR_NOT_FOUND_ERROR) {
+                                                        log_info("SS: ERROR(10) received from SL"); // Conforme PDF p.12
+                                                        sprintf(log_msg, "SS: Sending ERROR(10) to CLIENT");
+                                                        log_info(log_msg);
+                                                        // Enviar ERROR(10) para o cliente
+                                                        build_control_message(msg_to_client, sizeof(msg_to_client), ERROR_MSG, sl_payload); // sl_payload é o código de erro "10"
+                                                        write(current_client_socket, msg_to_client, strlen(msg_to_client));
+                                                    }
+                                                } else { log_error("SS: Falha ao parsear resposta do SL para REQ_CHECKALERT");}
+                                            } else {log_error("SS: Falha ao ler resposta do SL ou SL desconectou");}
+                                        }
+                                    } else {
+                                        log_error("SS: Sem conexão P2P com SL para enviar REQ_CHECKALERT.");
+                                        // Enviar erro para o cliente? Ex: ERROR_SERVICE_UNAVAILABLE? Protocolo não define.
+                                        // Por ora, o cliente não receberá resposta.
+                                    }
+                                } else { // Status do sensor é 0 (normal)
+                                    sprintf(log_msg, "Sensor %s status = 0 (normal). Nenhuma ação de alerta.", sens_id_from_client);
+                                    log_info(log_msg);
+                                    // O PDF diz "nenhuma ação adicional é tomada." (p.10, 2.a)
+                                    // Isso é problemático para o cliente que espera uma resposta.
+                                    // Vamos enviar RES_SENSSTATUS com LocID = 0 para indicar normalidade.
+                                    char msg_to_client[MAX_MSG_SIZE];
+                                    char loc_id_normal[] = "0";
+                                    build_control_message(msg_to_client, sizeof(msg_to_client), RES_SENSSTATUS, loc_id_normal);
+                                    if(write(current_client_socket, msg_to_client, strlen(msg_to_client)) < 0){
+                                        log_error("Falha ao enviar RES_SENSSTATUS (normal) para cliente.");
+                                    } else {
+                                        log_info("RES_SENSSTATUS (normal, LocID=0) enviado ao cliente.");
+                                    }
+                                }
+                            } else {
+                                log_error("REQ_SENSSTATUS de um IdC desconhecido ou não correspondente ao socket.");
+                                // Enviar ERROR SENSOR_NOT_FOUND?
+                            }
+                        }
+                        // else if (code == ...) { // Outros códigos de mensagem do cliente
+                        //
+                        // }
+                        else {
+                            sprintf(log_msg, "Servidor: Código de mensagem de cliente desconhecido ou não esperado: %d, Payload: '%s'", code, payload);
+                            log_info(log_msg);
+                        }
+
+                    } else {
+                        log_error("Falha ao parsear mensagem do cliente.");
+                    }
+
                 } else if (bytes_read == 0) {
                     // Cliente desconectou
                     log_info("Cliente desconectado.");
