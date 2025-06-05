@@ -199,12 +199,12 @@ int main(int argc, char *argv[]) {
     char command_line[MAX_MSG_SIZE];
     while (fgets(command_line, sizeof(command_line), stdin) != NULL) {
         command_line[strcspn(command_line, "\n")] = 0; // Remover newline
-        char log_msg_sensor[150]; // Buffer para logs específicos do sensor
+        char log_msg_sensor[150];           // Buffer para logs específicos do sensor
+        char msg_buffer[MAX_MSG_SIZE];      // Buffer para mensagens a serem enviadas
+        char response_buffer[MAX_MSG_SIZE]; // Buffer para respostas recebidas
 
         if (strcmp(command_line, "kill") == 0) {
             log_info("Comando 'kill' recebido. Iniciando desconexão dos servidores SS e SL...");
-            char msg_buffer[MAX_MSG_SIZE];
-            char response_buffer[MAX_MSG_SIZE];
 
             // 1. Desconectar do Servidor SS
             if (ss_fd > 0 && strlen(id_confirmado_ss) > 0) { // id_confirmado_ss é o ID de Slot do SS
@@ -297,9 +297,6 @@ int main(int argc, char *argv[]) {
                 sprintf(log_msg_sensor, "Comando 'check failure' recebido. Enviando REQ_SENSSTATUS (ID: %s) para SS...", my_global_sensor_id);
                 log_info(log_msg_sensor);
 
-                char msg_buffer[MAX_MSG_SIZE];
-                char response_buffer[MAX_MSG_SIZE];
-
                 build_control_message(msg_buffer, sizeof(msg_buffer), REQ_SENSSTATUS, my_global_sensor_id);
                 if (write(ss_fd, msg_buffer, strlen(msg_buffer)) < 0) {
                     log_error("Falha ao enviar REQ_SENSSTATUS para SS");
@@ -345,9 +342,6 @@ int main(int argc, char *argv[]) {
                         sprintf(log_msg_sensor, "Comando 'locate %s' recebido. Enviando REQ_SENSLOC para SL...", target_sensor_global_id);
                         log_info(log_msg_sensor);
 
-                        char msg_buffer[MAX_MSG_SIZE];
-                        char response_buffer[MAX_MSG_SIZE];
-
                         build_control_message(msg_buffer, sizeof(msg_buffer), REQ_SENSLOC, target_sensor_global_id);
                         
                         if (write(sl_fd, msg_buffer, strlen(msg_buffer)) < 0) {
@@ -384,6 +378,64 @@ int main(int argc, char *argv[]) {
                 }
             } else {
                 log_info("Comando 'locate' inválido. Uso: locate <SensID_Global>");
+            }
+        }
+        else if (strncmp(command_line, "diagnose ", strlen("diagnose ")) == 0) {
+            int target_loc_id;
+            // Extrair o LocId do comando
+            if (sscanf(command_line, "diagnose %d", &target_loc_id) == 1) {
+                // Validar LocId (1-10 conforme PDF)
+                if (target_loc_id >= 1 && target_loc_id <= 10) {
+                    if (sl_fd > 0 && strlen(id_confirmado_sl) > 0) { // id_confirmado_sl é o ID de Slot no SL
+                        sprintf(log_msg_sensor, "Comando 'diagnose %d' recebido. Enviando REQ_LOCLIST para SL...", target_loc_id);
+                        log_info(log_msg_sensor);
+
+                        char payload_req_loclist[MAX_MSG_SIZE];
+                        char target_loc_id_str[10];
+                        sprintf(target_loc_id_str, "%d", target_loc_id);
+
+                        // Payload: "SlotID_Cliente_no_SL,LocId_Alvo"
+                        snprintf(payload_req_loclist, sizeof(payload_req_loclist), "%s,%s", 
+                                 id_confirmado_sl, // ID de Slot que o SL deu a este sensor
+                                 target_loc_id_str);
+                        
+                        build_control_message(msg_buffer, sizeof(msg_buffer), REQ_LOCLIST, payload_req_loclist); // REQ_LOCLIST é código 40
+                        
+                        if (write(sl_fd, msg_buffer, strlen(msg_buffer)) < 0) {
+                            log_error("Falha ao enviar REQ_LOCLIST para SL");
+                        } else {
+                            // Aguardar RES_LOCLIST ou ERROR do SL
+                            ssize_t bytes_read = read(sl_fd, response_buffer, sizeof(response_buffer) - 1);
+                            if (bytes_read > 0) {
+                                response_buffer[bytes_read] = '\0';
+                                int code; char payload_sensores_str[MAX_MSG_SIZE]; // Lista de SenIDs
+                                if (parse_message(response_buffer, &code, payload_sensores_str, sizeof(payload_sensores_str))) {
+                                    if (code == RES_LOCLIST) { // RES_LOCLIST é código 41
+                                        // Payload é SenID1,SenID2,SenID3...
+                                        sprintf(log_msg_sensor, "Sensors at location %d: %s", target_loc_id, payload_sensores_str); // Conforme PDF p.11
+                                        log_info(log_msg_sensor);
+                                    } else if (code == ERROR_MSG && atoi(payload_sensores_str) == SENSOR_NOT_FOUND) {
+                                        // O PDF usa payload_sensores_str para o código de erro aqui.
+                                        log_info("Location not found"); // Conforme PDF p.11
+                                    } else {
+                                        sprintf(log_msg_sensor, "SL respondeu com msg inesperada para REQ_LOCLIST: Code=%d, Payload='%s'", code, payload_sensores_str);
+                                        log_info(log_msg_sensor);
+                                    }
+                                } else { log_error("Falha ao parsear resposta do SL para REQ_LOCLIST"); }
+                            } else if (bytes_read == 0) {
+                                log_info("SL desconectou antes de responder ao REQ_LOCLIST.");
+                            } else { 
+                                log_error("Falha ao ler resposta do SL para REQ_LOCLIST"); 
+                            }
+                        }
+                    } else {
+                        log_info("Não conectado ao Servidor de Localização (SL) para executar 'diagnose'.");
+                    }
+                } else {
+                    log_info("Comando 'diagnose' inválido: LocId deve ser entre 1 e 10.");
+                }
+            } else {
+                log_info("Comando 'diagnose' inválido. Uso: diagnose <LocId>");
             }
         }
         // Adicionar outros comandos

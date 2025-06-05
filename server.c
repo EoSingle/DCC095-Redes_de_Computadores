@@ -242,13 +242,10 @@ int main(int argc, char *argv[]) {
                         log_info(log_msg);
 
                         char msg_req_disc[MAX_MSG_SIZE];
-                        // O payload de REQ_DISCPEER é PidS, o ID que ESTE servidor (S_i) deu ao OUTRO servidor (S_j)
-                        // que está armazenado em my_pids_for_peer.
                         build_control_message(msg_req_disc, sizeof(msg_req_disc), REQ_DISCPEER, my_pids_for_peer);
                         
                         if (write(peer_socket_fd, msg_req_disc, strlen(msg_req_disc)) < 0) {
                             log_error("Falha ao enviar REQ_DISCPEER");
-                            // Poderia tentar fechar o socket localmente de qualquer forma
                             close(peer_socket_fd);
                             peer_socket_fd = -1;
                             p2p_current_state = P2P_DISCONNECTED;
@@ -257,9 +254,7 @@ int main(int argc, char *argv[]) {
                             p2p_current_state = P2P_DISCONNECT_REQ_SENT;
                         }
                     } else {
-                        log_info("No peer connected or P2P not fully established to issue REQ_DISCPEER.");
-                        // Conforme especificação: "Caso não haja conexão, o programa deverá imprimir No peer connected to close connection" [cite: 115]
-                        // No nosso caso, é mais preciso: "No peer connected or P2P not fully established..."
+                        log_info("No peer connected to close connection");
                      }
                 }
                 else if (strcmp(command_buffer, "exit") == 0)
@@ -1030,6 +1025,106 @@ int main(int argc, char *argv[]) {
                                 sprintf(log_msg, "SL: Falha ao enviar resposta (%d) para REQ_SENSLOC ao cliente (socket %d)", 
                                         (loc_id_found != -1) ? RES_SENSLOC : ERROR_MSG, current_client_socket);
                                 log_error(log_msg);
+                            }
+                        } else if (code == REQ_LOCLIST && current_server_role == SERVER_TYPE_SL) {
+                            // Payload esperado: "SlotID_Cliente_Requisitante,LocId_Alvo"
+                            char slot_id_requisitante_str[10];
+                            char target_loc_id_str[10];
+                            int target_loc_id_int;
+
+                            // Parsear o payload composto
+                            char *comma_ptr = strchr(payload, ',');
+                            int parsed_correctly = 0;
+                            if (comma_ptr != NULL) {
+                                size_t slot_id_len = comma_ptr - payload;
+                                if (slot_id_len < sizeof(slot_id_requisitante_str) && slot_id_len > 0) {
+                                    strncpy(slot_id_requisitante_str, payload, slot_id_len);
+                                    slot_id_requisitante_str[slot_id_len] = '\0';
+
+                                    strncpy(target_loc_id_str, comma_ptr + 1, sizeof(target_loc_id_str) - 1);
+                                    target_loc_id_str[sizeof(target_loc_id_str) - 1] = '\0';
+                                    
+                                    if (strlen(target_loc_id_str) > 0) {
+                                        target_loc_id_int = atoi(target_loc_id_str);
+                                        // Validar se o cliente requisitante (pelo slot_id) é quem diz ser (opcional, mas bom)
+                                        // int received_slot_id_req = atoi(slot_id_requisitante_str);
+                                        // if (connected_clients[i].assigned_slot == received_slot_id_req) {
+                                        parsed_correctly = 1;
+                                        // }
+                                    }
+                                }
+                            }
+
+                            if (!parsed_correctly) {
+                                log_error("[SL] REQ_LOCLIST: Formato de payload inválido. Esperado 'SlotID_Cliente,LocId_Alvo'.");
+                                // Enviar erro de payload inválido para o cliente? (O PDF não especifica um erro para isso)
+                                // Por ora, não responde, o cliente dará timeout.
+                                continue; // Próxima mensagem/iteração
+                            }
+                            
+                            // Log conforme PDF (p.11, [SL] REQ_LOCLIST SenID LocId)
+                            // SenID aqui é o ID de Slot do cliente que fez a requisição
+                            sprintf(log_msg, "[SL] REQ_LOCLIST (SlotCliente: %s, LocAlvo: %d)", 
+                                    slot_id_requisitante_str, target_loc_id_int);
+                            log_info(log_msg);
+
+                            // Validar LocId_Alvo (1-10)
+                            if (target_loc_id_int < 1 || target_loc_id_int > 10) {
+                                sprintf(log_msg, "[SL] REQ_LOCLIST: LocId %d inválida. Enviando ERROR(10).", target_loc_id_int);
+                                log_info(log_msg);
+                                char error_payload[10];
+                                sprintf(error_payload, "%02d", SENSOR_NOT_FOUND); // Usado para "Location not found"
+                                build_control_message(buffer, sizeof(buffer), ERROR_MSG, error_payload);
+                                if (write(current_client_socket, buffer, strlen(buffer)) < 0) { /* log erro */ }
+                                continue;
+                            }
+                            
+                            char list_of_sensor_global_ids[MAX_MSG_SIZE] = "";
+                            int count_found_at_loc = 0;
+                            size_t current_len = 0;
+
+                            // Buscar todos os sensores registrados naquela LocId_Alvo
+                            for (int k = 0; k < MAX_CLIENTS; k++) {
+                                if (connected_clients[k].socket_fd > 0 && // Cliente está ativo
+                                    connected_clients[k].id_cliente[0] != '\0' && // Tem um ID Global registrado
+                                    connected_clients[k].loc_id == target_loc_id_int) {
+                                    
+                                    if (count_found_at_loc > 0) {
+                                        // Adicionar vírgula antes do próximo ID, se não for o primeiro
+                                        if (current_len < sizeof(list_of_sensor_global_ids) - 1) {
+                                            list_of_sensor_global_ids[current_len++] = ',';
+                                        } else break; // Buffer cheio
+                                    }
+                                    // Concatenar o ID Global do sensor encontrado
+                                    size_t id_global_len = strlen(connected_clients[k].id_cliente);
+                                    if (current_len + id_global_len < sizeof(list_of_sensor_global_ids) -1) {
+                                        strcat(list_of_sensor_global_ids, connected_clients[k].id_cliente);
+                                        current_len += id_global_len;
+                                        count_found_at_loc++;
+                                    } else break; // Buffer cheio
+                                }
+                            }
+
+                            char msg_to_client_buffer[MAX_MSG_SIZE];
+                            
+                            if (count_found_at_loc > 0) { // Sensores encontrados na localização
+                                sprintf(log_msg, "[SL] Found sensors at location %d. Sending RES_LOCLIST: %s", 
+                                        target_loc_id_int, list_of_sensor_global_ids); // list_of_sensor_global_ids foi preenchida antes
+                                log_info(log_msg);
+                                build_control_message(msg_to_client_buffer, sizeof(msg_to_client_buffer), RES_LOCLIST, list_of_sensor_global_ids);
+                            } else { 
+                                // Nenhum sensor encontrado na localização válida, OU a localização em si é considerada "não encontrada" para esta operação.
+                                // Para alinhar com o exemplo do PDF "Location 07 not found", enviamos ERROR(10).
+                                sprintf(log_msg, "[SL] No sensors found for LocId %d or location considered not found for listing. Sending ERROR(10).", target_loc_id_int);
+                                log_info(log_msg);
+                                
+                                char error_payload[10];
+                                sprintf(error_payload, "%02d", SENSOR_NOT_FOUND); // Código 10
+                                build_control_message(msg_to_client_buffer, sizeof(msg_to_client_buffer), ERROR_MSG, error_payload);
+                            }
+                            
+                            if (write(current_client_socket, msg_to_client_buffer, strlen(msg_to_client_buffer)) < 0) {
+                                log_error("SL: Falha ao enviar resposta para REQ_LOCLIST ao cliente.");
                             }
                         }
                         // ... outros tratadores de mensagens do cliente ...
