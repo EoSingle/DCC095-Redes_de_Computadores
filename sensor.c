@@ -86,7 +86,7 @@ int connect_and_get_id(const char *server_type_name, const char *server_ip, int 
                 int error_code_payload = atoi(received_payload); // 'payload' aqui é o código do erro
                 // A tabela de mensagens de erro está na página 6.
                 // O erro "Sensor limit exceeded" é código 09. 
-                if (error_code_payload == SENSOR_LIMIT_EXCEEDED_ERROR) { 
+                if (error_code_payload == SENSOR_LIMIT_EXCEEDED) { 
                     sprintf(log_msg, "%s respondeu ERROR(%02d): Sensor limit exceeded", server_type_name, error_code_payload);
                 } else {
                     sprintf(log_msg, "%s respondeu ERROR(%02d): Código de erro %s", server_type_name, error_code_payload, received_payload);
@@ -207,10 +207,10 @@ int main(int argc, char *argv[]) {
             char response_buffer[MAX_MSG_SIZE];
 
             // 1. Desconectar do Servidor SS
-            if (ss_fd > 0 && strlen(my_global_sensor_id) > 0) {
-                sprintf(log_msg_sensor, "Enviando REQ_DISCSEN (ID: %s) para SS...", my_global_sensor_id);
+            if (ss_fd > 0 && strlen(id_confirmado_ss) > 0) { // id_confirmado_ss é o ID de Slot do SS
+                sprintf(log_msg_sensor, "Enviando REQ_DISCSEN (Slot ID: %s) para SS...", id_confirmado_ss);
                 log_info(log_msg_sensor);
-                build_control_message(msg_buffer, sizeof(msg_buffer), REQ_DISCSEN, my_global_sensor_id);
+                build_control_message(msg_buffer, sizeof(msg_buffer), REQ_DISCSEN, id_confirmado_ss);
 
                 if (write(ss_fd, msg_buffer, strlen(msg_buffer)) < 0) {
                     log_error("Falha ao enviar REQ_DISCSEN para SS");
@@ -222,10 +222,15 @@ int main(int argc, char *argv[]) {
                         int code;
                         char payload[MAX_MSG_SIZE];
                         if (parse_message(response_buffer, &code, payload, sizeof(payload))) {
+                            sprintf(log_msg_sensor, "SS respondeu: Code=%d, Payload='%s'", code, payload);
+                            log_info(log_msg_sensor);
+
                             if (code == OK_MSG && atoi(payload) == OK_SUCCESSFUL_DISCONNECT) {
                                 log_info("SS Successful disconnect"); // Conforme PDF
-                            } else if (code == ERROR_MSG && atoi(payload) == SENSOR_NOT_FOUND_ERROR) {
+                            } else if (code == ERROR_MSG && atoi(payload) == SENSOR_NOT_FOUND) {
                                 log_info("SS respondeu ERROR(10): Sensor not found"); // Conforme PDF
+                            } else if (code == INVALID_MSG_CODE_ERROR && atoi(payload) == INVALID_MSG_CODE_ERROR) {
+                                log_info("SS respondeu ERROR(11): Invalid message code"); // Conforme PDF
                             } else {
                                 sprintf(log_msg_sensor, "SS respondeu com msg inesperada para REQ_DISCSEN: Code=%d, Payload='%s'", code, payload);
                                 log_info(log_msg_sensor);
@@ -241,15 +246,16 @@ int main(int argc, char *argv[]) {
                 }
                 close(ss_fd); // Fechar socket com SS independentemente da resposta
                 ss_fd = -1;   // Marcar como fechado
+                
             } else {
                 log_info("Não conectado ao SS ou sem ID do SS para enviar REQ_DISCSEN.");
             }
 
             // 2. Desconectar do Servidor SL
-            if (sl_fd > 0 && strlen(my_global_sensor_id) > 0) {
-                sprintf(log_msg_sensor, "Enviando REQ_DISCSEN (ID: %s) para SL...", my_global_sensor_id);
+            if (sl_fd > 0 && strlen(id_confirmado_sl) > 0) { // id_confirmado_sl é o ID de Slot do SL
+                sprintf(log_msg_sensor, "Enviando REQ_DISCSEN (Slot ID: %s) para SL...", id_confirmado_sl);
                 log_info(log_msg_sensor);
-                build_control_message(msg_buffer, sizeof(msg_buffer), REQ_DISCSEN, my_global_sensor_id);
+                build_control_message(msg_buffer, sizeof(msg_buffer), REQ_DISCSEN, id_confirmado_sl);
 
                 if (write(sl_fd, msg_buffer, strlen(msg_buffer)) < 0) {
                     log_error("Falha ao enviar REQ_DISCSEN para SL");
@@ -263,7 +269,7 @@ int main(int argc, char *argv[]) {
                         if (parse_message(response_buffer, &code, payload, sizeof(payload))) {
                             if (code == OK_MSG && atoi(payload) == OK_SUCCESSFUL_DISCONNECT) {
                                 log_info("SL Successful disconnect"); // Conforme PDF
-                            } else if (code == ERROR_MSG && atoi(payload) == SENSOR_NOT_FOUND_ERROR) {
+                            } else if (code == ERROR_MSG && atoi(payload) == SENSOR_NOT_FOUND) {
                                 log_info("SL respondeu ERROR(10): Sensor not found"); // Conforme PDF
                             } else {
                                 sprintf(log_msg_sensor, "SL respondeu com msg inesperada para REQ_DISCSEN: Code=%d, Payload='%s'", code, payload);
@@ -325,7 +331,7 @@ int main(int argc, char *argv[]) {
                                 else sprintf(log_msg_sensor, "Alerta recebido de localização desconhecida ou inválida: %d", loc_id);
                                 log_info(log_msg_sensor);
 
-                            } else if (code == ERROR_MSG && atoi(payload_loc_id_str) == SENSOR_NOT_FOUND_ERROR) {
+                            } else if (code == ERROR_MSG && atoi(payload_loc_id_str) == SENSOR_NOT_FOUND) {
                                 log_info("Sensor not found"); // Conforme PDF
                             } else {
                                 sprintf(log_msg_sensor, "SS respondeu com msg inesperada para REQ_SENSSTATUS: Code=%d, Payload='%s'", code, payload_loc_id_str);
