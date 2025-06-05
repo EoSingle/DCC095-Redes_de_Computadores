@@ -334,6 +334,57 @@ int main(int argc, char *argv[]) {
             } else {
                 log_info("Não conectado ao SS ou sem ID do SS para enviar REQ_SENSSTATUS.");
             }
+        } else if (strncmp(command_line, "locate ", strlen("locate ")) == 0) {
+            char target_sensor_global_id[MAX_PIDS_LENGTH];
+            // Extrair o SensID_Global do comando
+            // sscanf pula espaços em branco por padrão após a string de formato.
+            if (sscanf(command_line, "locate %49s", target_sensor_global_id) == 1) {
+                // Validar rapidamente o formato do ID (ex: 10 caracteres)
+                if (strlen(target_sensor_global_id) == 10) { // Assumindo ID Global de 10 chars
+                    if (sl_fd > 0) { // Verificar se está conectado ao SL
+                        sprintf(log_msg_sensor, "Comando 'locate %s' recebido. Enviando REQ_SENSLOC para SL...", target_sensor_global_id);
+                        log_info(log_msg_sensor);
+
+                        char msg_buffer[MAX_MSG_SIZE];
+                        char response_buffer[MAX_MSG_SIZE];
+
+                        build_control_message(msg_buffer, sizeof(msg_buffer), REQ_SENSLOC, target_sensor_global_id);
+                        
+                        if (write(sl_fd, msg_buffer, strlen(msg_buffer)) < 0) {
+                            log_error("Falha ao enviar REQ_SENSLOC para SL");
+                        } else {
+                            // Aguardar RES_SENSLOC ou ERROR do SL
+                            ssize_t bytes_read = read(sl_fd, response_buffer, sizeof(response_buffer) - 1);
+                            if (bytes_read > 0) {
+                                response_buffer[bytes_read] = '\0';
+                                int code; char payload_loc_id_str[MAX_MSG_SIZE];
+                                if (parse_message(response_buffer, &code, payload_loc_id_str, sizeof(payload_loc_id_str))) {
+                                    if (code == RES_SENSLOC) {
+                                        // Payload é LocId
+                                        sprintf(log_msg_sensor, "Current sensor location: %s", payload_loc_id_str);
+                                        log_info(log_msg_sensor);
+                                    } else if (code == ERROR_MSG && atoi(payload_loc_id_str) == SENSOR_NOT_FOUND) {
+                                        log_info("Sensor not found"); // Conforme PDF p.11
+                                    } else {
+                                        sprintf(log_msg_sensor, "SL respondeu com msg inesperada para REQ_SENSLOC: Code=%d, Payload='%s'", code, payload_loc_id_str);
+                                        log_info(log_msg_sensor);
+                                    }
+                                } else { log_error("Falha ao parsear resposta do SL para REQ_SENSLOC"); }
+                            } else if (bytes_read == 0) {
+                                log_info("SL desconectou antes de responder ao REQ_SENSLOC.");
+                            } else { 
+                                log_error("Falha ao ler resposta do SL para REQ_SENSLOC"); 
+                            }
+                        }
+                    } else {
+                        log_info("Não conectado ao Servidor de Localização (SL) para executar 'locate'.");
+                    }
+                } else {
+                    log_info("Comando 'locate' inválido: SensID deve ter 10 caracteres numéricos.");
+                }
+            } else {
+                log_info("Comando 'locate' inválido. Uso: locate <SensID_Global>");
+            }
         }
         // Adicionar outros comandos
         log_info("Digite comandos ('check failure', 'locate <SensID>', 'diagnose <LocId>', 'kill' para sair):");

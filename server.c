@@ -987,7 +987,51 @@ int main(int argc, char *argv[]) {
                                 if (write(current_client_socket, msg_error_to_client, strlen(msg_error_to_client)) < 0) {log_error("Falha ao enviar ERROR SENSOR_NOT_FOUND para cliente.");}
                             }
                         }
-                        // else if (code == REQ_SENSLOC && (sou_servidor_localizacao)) { ... }
+                        else if (code == REQ_SENSLOC && current_server_role == SERVER_TYPE_SL) {
+                            // Payload é o ID_GLOBAL_SENSOR do sensor a ser localizado
+                            char target_global_sensor_id[MAX_PIDS_LENGTH];
+                            strncpy(target_global_sensor_id, payload, sizeof(target_global_sensor_id) - 1);
+                            target_global_sensor_id[sizeof(target_global_sensor_id) - 1] = '\0';
+
+                            // Log conforme PDF (p.11, [SL] REQ_SENSLOC SensID)
+                            sprintf(log_msg, "[SL] REQ_SENSLOC %s", target_global_sensor_id);
+                            log_info(log_msg);
+
+                            int loc_id_found = -1; // Usar -1 para indicar que não foi encontrado
+
+                            // Procurar o sensor na base de dados do SL usando o ID_GLOBAL_SENSOR
+                            for (int k = 0; k < MAX_CLIENTS; k++) {
+                                if (connected_clients[k].socket_fd > 0 && // Cliente está ativo neste slot
+                                    strcmp(connected_clients[k].id_cliente, target_global_sensor_id) == 0) {
+                                    loc_id_found = connected_clients[k].loc_id;
+                                    break;
+                                }
+                            }
+
+                            char msg_to_client_buffer[MAX_MSG_SIZE];
+                            char response_payload_str[10]; 
+
+                            if (loc_id_found != -1) { // Sensor encontrado
+                                // Enviar RES_SENSLOC(LocId) para o cliente requisitante
+                                sprintf(response_payload_str, "%d", loc_id_found);
+                                build_control_message(msg_to_client_buffer, sizeof(msg_to_client_buffer), RES_SENSLOC, response_payload_str);
+                                sprintf(log_msg, "[SL] Enviando RES_SENSLOC %s para cliente (socket %d)", response_payload_str, current_client_socket);
+                                log_info(log_msg);
+                            } else {
+                                // Sensor não encontrado
+                                // Enviar ERROR_MSG(SENSOR_NOT_FOUND_ERROR) para o cliente requisitante
+                                sprintf(log_msg, "[SL] Sensor %s não encontrado. Enviando ERROR(10) para cliente (socket %d).", target_global_sensor_id, current_client_socket);
+                                log_info(log_msg);
+                                sprintf(response_payload_str, "%02d", SENSOR_NOT_FOUND);
+                                build_control_message(msg_to_client_buffer, sizeof(msg_to_client_buffer), ERROR_MSG, response_payload_str);
+                            }
+                            
+                            if (write(current_client_socket, msg_to_client_buffer, strlen(msg_to_client_buffer)) < 0) {
+                                sprintf(log_msg, "SL: Falha ao enviar resposta (%d) para REQ_SENSLOC ao cliente (socket %d)", 
+                                        (loc_id_found != -1) ? RES_SENSLOC : ERROR_MSG, current_client_socket);
+                                log_error(log_msg);
+                            }
+                        }
                         // ... outros tratadores de mensagens do cliente ...
                         else {
                             sprintf(log_msg, "Código de mensagem de cliente desconhecido ou não esperado: %d", code);
