@@ -27,14 +27,22 @@ char peer_pids_for_me[MAX_PIDS_LENGTH] = ""; // ID que o peer atribuiu a este se
 
 typedef struct {
     int socket_fd;
-    char id_cliente[MAX_PIDS_LENGTH]; // IdC gerado pelo servidor
+    char id_cliente[MAX_PIDS_LENGTH];
+    int assigned_slot; // Slot atribuído para este cliente (0 a 14)
     int loc_id; // Se este for o SL
     int status_risco; // Se este for o SS (0 ou 1)
-    // Adicionar mais campos conforme necessário
 } ClientInfo;
 
 ClientInfo connected_clients[MAX_CLIENTS]; // Array de clientes conectados
 int num_connected_clients = 0; // Contador
+
+typedef enum {
+    SERVER_TYPE_UNINITIALIZED,
+    SERVER_TYPE_SS,  // Servidor de Status
+    SERVER_TYPE_SL   // Servidor de Localização
+} ServerRole;
+
+ServerRole current_server_role = SERVER_TYPE_UNINITIALIZED;
 
 // Função para gerar IdC único (exemplo simples)
 void generate_unique_client_id(char *buffer, size_t buffer_len, int client_socket_fd) {
@@ -43,18 +51,29 @@ void generate_unique_client_id(char *buffer, size_t buffer_len, int client_socke
 }
 
 int main(int argc, char *argv[]) {
-    if (argc < 4) {
-        fprintf(stderr, "Uso: %s <ip_peer_destino> <porta_p2p_peer_destino> <porta_escuta_cliente_propria>\n", argv[0]);
-        fprintf(stderr, "Exemplo: ./server 127.0.0.1 64000 60000\n");
+    if (argc < 5) {
+        fprintf(stderr, "Uso: %s <ip_peer_destino> <porta_p2p> <porta_escuta_cliente_propria> <SS|SL>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
-    char *peer_target_ip = argv[1];
-    int peer_target_port = atoi(argv[2]); // Porta P2P onde o outro peer escuta (ou este tentará conectar)
-                                          // Esta também será a porta onde este servidor escutará por P2P se a conexão ativa falhar.
+    char *peer_target_ip = argv[1];         // IP do peer destino (ou seja, o outro servidor)
+    int peer_target_port = atoi(argv[2]);   // Porta P2P onde o outro peer escuta (ou este tentará conectar)
+                                            // Esta também será a porta onde este servidor escutará por P2P se a conexão ativa falhar.
     int client_listen_port = atoi(argv[3]); // Porta onde este servidor escuta por clientes
+    char *server_type_arg = argv[4];        // Tipo de servidor: SS ou SL
 
-    int client_master_socket_fd, new_socket_fd; // Renomeado master_socket_fd para clareza
+    if (strcmp(server_type_arg, "SS") == 0) {
+        current_server_role = SERVER_TYPE_SS;
+        log_info("Servidor configurado para operar como SERVIDOR DE STATUS (SS).");
+    } else if (strcmp(server_type_arg, "SL") == 0) {
+        current_server_role = SERVER_TYPE_SL;
+        log_info("Servidor configurado para operar como SERVIDOR DE LOCALIZAÇÃO (SL).");
+    } else {
+        fprintf(stderr, "Erro: Tipo de servidor inválido '%s'. Use 'SS' ou 'SL'.\n", server_type_arg);
+        exit(EXIT_FAILURE);
+    }
+
+    int client_master_socket_fd, new_socket_fd;
     int peer_listen_socket_fd = -1; // Socket para escutar P2P se a conexão ativa falhar
     
     struct sockaddr_in server_addr_clients, server_addr_peer_listen, peer_target_addr;
@@ -197,28 +216,117 @@ int main(int argc, char *argv[]) {
                         sprintf(log_msg, "Msg do cliente (socket %d): Code=%d, Payload='%s'", current_client_socket, code, payload);
                         log_info(log_msg);
                         
-                        // Lógica para tratar REQ_CONNSEN e outras mensagens do cliente
+                        // Lógica para tratar mensagens do cliente
                         if (code == REQ_CONNSEN) {
-                            int client_loc_id = atoi(payload);
+                            char global_sensor_id_str[MAX_PIDS_LENGTH]; // Para o ID Global de 10 chars
+                            char loc_id_str_from_payload[10];           // Para a parte da string da LocId
+                            int client_loc_id_from_payload;
+                            int proceed_with_registration = 0;          // Flag para controlar o fluxo
 
-                            // Verificar se o socket realmente corresponde, como uma sanidade.
+                            // 1. Parsear o payload "ID_GLOBAL_SENSOR,LocId"
+                            char *comma_ptr = strchr(payload, ',');
+
+                            if (comma_ptr != NULL) {
+                                size_t id_len = comma_ptr - payload;
+                                if (id_len < sizeof(global_sensor_id_str) && id_len > 0) { // ID não pode ser vazio
+                                    strncpy(global_sensor_id_str, payload, id_len);
+                                    global_sensor_id_str[id_len] = '\0';
+
+                                    strncpy(loc_id_str_from_payload, comma_ptr + 1, sizeof(loc_id_str_from_payload) - 1);
+                                    loc_id_str_from_payload[sizeof(loc_id_str_from_payload) - 1] = '\0';
+                                    
+                                    // Verificar se loc_id_str_from_payload não está vazio antes de atoi
+                                    if (strlen(loc_id_str_from_payload) > 0) {
+                                        client_loc_id_from_payload = atoi(loc_id_str_from_payload);
+                                        
+                                        // Validação básica do ID Global (ex: tamanho 10)
+                                        if (strlen(global_sensor_id_str) == 10) { // Conforme tabelas do PDF
+                                            // Adicionar validação para checar se são todos dígitos, se necessário
+                                            proceed_with_registration = 1;
+                                            sprintf(log_msg, "REQ_CONNSEN payload parseado: ID_Global='%s', LocId=%d", 
+                                                    global_sensor_id_str, client_loc_id_from_payload);
+                                            log_info(log_msg);
+                                        } else {
+                                            log_error("Formato de payload inválido para REQ_CONNSEN: ID Global não tem 10 caracteres.");
+                                        }
+                                    } else {
+                                        log_error("Formato de payload inválido para REQ_CONNSEN: LocId ausente após a vírgula.");
+                                    }
+                                } else {
+                                    log_error("Formato de payload inválido para REQ_CONNSEN: ID Global muito longo ou vazio.");
+                                }
+                            } else {
+                                log_error("Formato de payload inválido para REQ_CONNSEN. Esperado 'ID_Global,LocId' (sem vírgula).");
+                            }
+
+                            if (!proceed_with_registration) {
+                                // Enviar mensagem de erro para o cliente
+                                char error_payload_str[10];
+                                sprintf(error_payload_str, "%02d", INVALID_PAYLOAD_ERROR);
+                                char msg_error[MAX_MSG_SIZE];
+                                build_control_message(msg_error, sizeof(msg_error), ERROR_MSG, error_payload_str);
+                                if (write(current_client_socket, msg_error, strlen(msg_error)) < 0) { /* log erro no write */ }
+                                close(current_client_socket); // Fechar conexão com o cliente inválido
+                                client_sockets[i] = 0; // Limpar slot do cliente
+                                connected_clients[i].socket_fd = 0; // Limpar slot do cliente conectado
+                                continue; // Pula para o próximo cliente
+                            }
+
+                            // 2. Verificar se o socket realmente corresponde (sua verificação de sanidade)
+                            // Esta verificação já está no seu código original, pode mantê-la.
                             if (connected_clients[i].socket_fd != current_client_socket) {
-                                // Esta situação indica um erro grave na lógica de gerenciamento de arrays.
                                 sprintf(log_msg, "Erro crítico: Inconsistência entre client_sockets[%d] (%d) e connected_clients[%d].socket_fd (%d).",
                                         i, current_client_socket, i, connected_clients[i].socket_fd);
                                 log_error(log_msg);
                                 close(current_client_socket);
                                 client_sockets[i] = 0;
-                                if (connected_clients[i].socket_fd != 0) { // Limpar completamente
+                                if (connected_clients[i].socket_fd != 0) {
                                      if (connected_clients[i].id_cliente[0] != '\0' && num_connected_clients > 0) num_connected_clients--;
                                      connected_clients[i].socket_fd = 0;
                                      connected_clients[i].id_cliente[0] = '\0';
                                 }
-                                continue; // Pular para o próximo cliente
+                                continue; 
                             }
 
-                            // Verificar se o cliente já está registrado (já tem um IdC)
-                            if (connected_clients[i].id_cliente[0] == '\0') { // Cliente ainda não registrado
+                            // 3. Lógica de Registro ou Atualização
+                            if (connected_clients[i].id_cliente[0] == '\0') { // Slot está "limpo" para um novo registro de ID
+                                // Verificar se este ID Global já está em uso por outro socket/slot ativo
+                                int id_already_in_use = 0;
+                                for (int k = 0; k < MAX_CLIENTS; k++) {
+                                    if (connected_clients[k].socket_fd > 0 && // Cliente ativo no slot k
+                                        strcmp(connected_clients[k].id_cliente, global_sensor_id_str) == 0) {
+                                        id_already_in_use = 1;
+                                        sprintf(log_msg, "Erro: ID de Sensor '%s' já está em uso pelo socket %d (slot %d). Rejeitando novo registro para socket %d.",
+                                                global_sensor_id_str, connected_clients[k].socket_fd, k+1, current_client_socket);
+                                        log_error(log_msg);
+                                        // Enviar mensagem de erro para o cliente
+                                        char error_payload_str[10];
+                                        sprintf(error_payload_str, "%02d", SENSOR_ID_ALREADY_EXISTS_ERROR);
+                                        char msg_error[MAX_MSG_SIZE];
+                                        build_control_message(msg_error, sizeof(msg_error), ERROR_MSG, error_payload_str);
+                                        if (write(current_client_socket, msg_error, strlen(msg_error)) < 0) { /* log erro no write */ }
+                                        // Fechar a conexão com o cliente atual, pois não pode ser registrado
+                                        sprintf(log_msg, "Fechando conexão com socket %d (slot %d) devido a ID Global já em uso.", 
+                                                current_client_socket, i + 1);
+                                        log_info(log_msg);
+                                        // Fechar a conexão com o cliente atual
+                                        close(current_client_socket); client_sockets[i]=0; connected_clients[i].socket_fd=0;
+                                        break; 
+                                    }
+                                }
+
+                                if (id_already_in_use) {
+                                    // Se o ID já está em uso por outro socket, não prosseguir com este.
+                                    // Poderia fechar current_client_socket e limpar client_sockets[i] e connected_clients[i].socket_fd
+                                    // para liberar o slot do array para um futuro cliente válido.
+                                    close(current_client_socket);
+                                    client_sockets[i] = 0;
+                                    connected_clients[i].socket_fd = 0; 
+                                    // Não decrementar num_connected_clients pois este não foi contado ainda.
+                                    continue; // Pula para o próximo cliente
+                                }
+
+                                // Verificar limite de clientes *registrados*
                                 if (num_connected_clients >= MAX_CLIENTS) {
                                     log_info("Limite de sensores (num_connected_clients) excedido. Enviando ERROR(09)...");
                                     char error_payload_str[10];
@@ -226,31 +334,57 @@ int main(int argc, char *argv[]) {
                                     char msg_error[MAX_MSG_SIZE];
                                     build_control_message(msg_error, sizeof(msg_error), ERROR_MSG, error_payload_str);
                                     if (write(current_client_socket, msg_error, strlen(msg_error)) < 0) { /* log erro no write */ }
+                                    // O PDF não diz para fechar a conexão, mas o cliente pode tentar de novo ou sair.
                                 } else {
-                                    char new_client_id_str[MAX_PIDS_LENGTH];
-                                    generate_unique_client_id(new_client_id_str, sizeof(new_client_id_str), current_client_socket);
-
-                                    strncpy(connected_clients[i].id_cliente, new_client_id_str, MAX_PIDS_LENGTH - 1);
+                                   // Armazenar o ID Global e outros dados.
+                                    strncpy(connected_clients[i].id_cliente, global_sensor_id_str, MAX_PIDS_LENGTH - 1);
                                     connected_clients[i].id_cliente[MAX_PIDS_LENGTH - 1] = '\0';
                                     
-                                    connected_clients[i].loc_id = client_loc_id; 
+                                    connected_clients[i].loc_id = client_loc_id_from_payload;
+                                    connected_clients[i].assigned_slot = i + 1; // ID de slot (1-15)
 
+                                    if (current_server_role == SERVER_TYPE_SS) {
+                                        connected_clients[i].status_risco = 0; // Status inicial normal
+                                    }
                                     num_connected_clients++;
 
-                                    sprintf(log_msg, "Client %s added (Loc %d)", connected_clients[i].id_cliente, client_loc_id);
+                                    sprintf(log_msg, "Client (Global ID: %s, Slot: %d) added (Loc %d)", 
+                                            connected_clients[i].id_cliente, 
+                                            connected_clients[i].assigned_slot, 
+                                            client_loc_id_from_payload);
                                     log_info(log_msg);
 
+                                    // Enviar RES_CONNSEN com o ID do SLOT (i+1) como payload (IdSen)
+                                    char id_slot_str[10];
+                                    sprintf(id_slot_str, "%d", connected_clients[i].assigned_slot);
+                                    
+                                    char msg_res_connsen[MAX_MSG_SIZE];
+                                    build_control_message(msg_res_connsen, sizeof(msg_res_connsen), RES_CONNSEN, id_slot_str);
+                                    if (write(current_client_socket, msg_res_connsen, strlen(msg_res_connsen)) < 0) { /* log erro no write */ }
+                                    else { log_info("RES_CONNSEN enviado ao cliente com ID de Slot."); }
+                                }
+                            } else { 
+                                // Este slot/socket (connected_clients[i]) já tem um ID Global associado.
+                                // Verificar se é o mesmo ID Global tentando se registrar novamente neste socket.
+                                if (strcmp(connected_clients[i].id_cliente, global_sensor_id_str) == 0) {
+                                    // Mesmo sensor, mesma conexão, enviando REQ_CONNSEN novamente.
+                                    sprintf(log_msg, "Cliente %s (Slot %d, Socket %d) já registrado enviou REQ_CONNSEN novamente. Reenviando RES_CONNSEN.",
+                                            connected_clients[i].id_cliente, i + 1, current_client_socket);
+                                    log_info(log_msg);
+                                    // Reenviar o RES_CONNSEN existente
                                     char msg_res_connsen[MAX_MSG_SIZE];
                                     build_control_message(msg_res_connsen, sizeof(msg_res_connsen), RES_CONNSEN, connected_clients[i].id_cliente);
                                     if (write(current_client_socket, msg_res_connsen, strlen(msg_res_connsen)) < 0) { /* log erro no write */ }
-                                    else { log_info("RES_CONNSEN enviado ao cliente."); }
+                                } else {
+                                    // Este socket (current_client_socket, que é connected_clients[i].socket_fd)
+                                    // já está associado ao ID connected_clients[i].id_cliente.
+                                    // Agora ele enviou um REQ_CONNSEN com um *novo e diferente* global_sensor_id_str.
+                                    // Isso é uma violação ou um cenário muito estranho.
+                                    sprintf(log_msg, "Socket %d (Slot %d, Cliente %s) recebeu REQ_CONNSEN com um ID_Global diferente: '%s'. Rejeitando.",
+                                            current_client_socket, i + 1, connected_clients[i].id_cliente, global_sensor_id_str);
+                                    log_error(log_msg);
+                                    // Enviar um erro? O protocolo não cobre isso. Poderia fechar a conexão.
                                 }
-                            } else {
-                                // Cliente já registrado (tem um IdC), mas enviou REQ_CONNSEN novamente.
-                                sprintf(log_msg, "Cliente %s (socket %d) já registrado enviou REQ_CONNSEN novamente. Ignorando.",
-                                        connected_clients[i].id_cliente, current_client_socket);
-                                log_info(log_msg);
-                                // Opcionalmente, poderia reenviar o RES_CONNSEN existente.
                             }
                         }
                         // else if (code == REQ_DISCSEN) { ... }
@@ -262,9 +396,6 @@ int main(int argc, char *argv[]) {
                             log_info(log_msg);
                             // Enviar mensagem de erro? O protocolo não especifica um erro genérico para isso.
                         }
-                        // ##################################################################
-                        // ## FIM DO TRECHO DE CÓDIGO COMENTADO QUE VOCÊ PRECISA INSERIR ##
-                        // ##################################################################
 
                     } else {
                         log_error("Falha ao parsear mensagem do cliente.");

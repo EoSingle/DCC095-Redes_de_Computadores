@@ -23,3 +23,5 @@ clean:
 
 # Compilar sensor e server com o comando 'make' sem parâmetros adicionais [cite: 135]
 .PHONY: all clean
+
+test: clean all
