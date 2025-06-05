@@ -1,31 +1,31 @@
-// sensor.c
-#include "common.h" // Inclui MAX_MSG_SIZE e outras definições/funções
+#include "common.h"
 #include <ctype.h> // Para isdigit
 
-// ID recebidos dos servidores
+// ID recebido dos servidores
 char my_sensor_id[MAX_PIDS_LENGTH] = "";
 int initial_loc_id = -1;
 
-// IDs confirmados pelos servidores
+// Função para conectar ao servidor SS ou SL e obter o ID do sensor
 int connect_and_get_id(const char *server_type_name, const char *server_ip, int server_port, 
-                       int loc_id, // loc_id é o initial_loc_id
-                       char *id_storage, // Onde armazenaremos o ID confirmado pelo servidor
-                       const char *sensor_id_to_send) { // Passando o ID global como parâmetro
+                       int loc_id,                      // ID de localização do sensor
+                       char *id_storage,                // Onde armazenaremos o ID confirmado pelo servidor
+                       const char *sensor_id_to_send) { // Sensor ID a ser enviado no REQ_CONNSEN
     int sockfd;
     struct sockaddr_in serv_addr;
-    char buffer[MAX_MSG_SIZE + 1]; // Buffer para construir e receber mensagens
-    char log_msg[150];             // Buffer para logs
+    char buffer[MAX_MSG_SIZE + 1];              // Buffer para construir e receber mensagens
+    char log_msg[150];                          // Buffer para logs
     char payload_for_req_connsen[MAX_MSG_SIZE]; // Buffer para o payload composto de REQ_CONNSEN
 
-    // 1. Criação e conexão do socket 
+    // Criação e conexão do socket 
     if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         sprintf(log_msg, "Falha ao criar socket para %s", server_type_name);
         log_error(log_msg);
         return -1;
     }
 
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(server_port);
+    serv_addr.sin_family = AF_INET;          // Família de endereços IPv4
+    serv_addr.sin_port = htons(server_port); // Porta do servidor
+    // Converter o endereço IP do servidor
     if (inet_pton(AF_INET, server_ip, &serv_addr.sin_addr) <= 0) {
         sprintf(log_msg, "Endereço IP inválido para %s", server_type_name);
         log_error(log_msg);
@@ -33,6 +33,7 @@ int connect_and_get_id(const char *server_type_name, const char *server_ip, int 
         return -1;
     }
 
+    // Conectar ao servidor
     if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
         sprintf(log_msg, "Falha ao conectar ao servidor %s (%s:%d)", server_type_name, server_ip, server_port);
         log_error(log_msg);
@@ -42,8 +43,8 @@ int connect_and_get_id(const char *server_type_name, const char *server_ip, int 
     sprintf(log_msg, "Conectado ao servidor %s (%s:%d).", server_type_name, server_ip, server_port);
     log_info(log_msg);
 
-    // 2. Enviar REQ_CONNSEN com payload "ID_Sensor,LocId"
-    char loc_id_as_string[12]; // Suficiente para um int
+    // Enviar REQ_CONNSEN com payload "ID_Sensor,LocId"
+    char loc_id_as_string[12];
     sprintf(loc_id_as_string, "%d", loc_id);
 
     // Construir o payload composto: "ID_SENSOR,LOCID"
@@ -63,7 +64,7 @@ int connect_and_get_id(const char *server_type_name, const char *server_ip, int 
         return -1;
     }
 
-    // 3. Aguardar e Processar RES_CONNSEN(IdSen), onde IdSen deve ser o ID_Global_Sensor
+    // Aguardar e Processar RES_CONNSEN(IdSen)
     ssize_t bytes_read = read(sockfd, buffer, MAX_MSG_SIZE);
     if (bytes_read > 0) {
         buffer[bytes_read] = '\0';
@@ -71,21 +72,17 @@ int connect_and_get_id(const char *server_type_name, const char *server_ip, int 
         char received_payload[MAX_PIDS_LENGTH]; // Para armazenar o IdSen recebido
 
         if (parse_message(buffer, &code, received_payload, sizeof(received_payload))) {
-            if (code == RES_CONNSEN) { // RES_CONNSEN é código 24 
-                // O payload 'received_payload' deve ser o ID Global que o servidor está confirmando.
+            if (code == RES_CONNSEN) { 
+                // O payload 'received_payload' deve ser o IDSen que o servidor está confirmando.
                 sprintf(log_msg, "%s respondeu com RES_CONNSEN: Code=%d, Payload='%s'", server_type_name, code, received_payload);
                 strncpy(id_storage, received_payload, MAX_PIDS_LENGTH - 1);
                 id_storage[MAX_PIDS_LENGTH - 1] = '\0';
                     
-                // "SS New ID: IdC" ou "SL New ID: IdC" 
                 sprintf(log_msg, "%s New ID: %s", server_type_name, id_storage);
                 log_info(log_msg);
                 return sockfd; // Sucesso, retorna o socket descriptor
             } else if (code == ERROR_MSG) {
-                // Imprimir descrição do erro 
                 int error_code_payload = atoi(received_payload); // 'payload' aqui é o código do erro
-                // A tabela de mensagens de erro está na página 6.
-                // O erro "Sensor limit exceeded" é código 09. 
                 if (error_code_payload == SENSOR_LIMIT_EXCEEDED) { 
                     sprintf(log_msg, "%s respondeu ERROR(%02d): Sensor limit exceeded", server_type_name, error_code_payload);
                 } else {
@@ -123,7 +120,7 @@ int connect_and_get_id(const char *server_type_name, const char *server_ip, int 
 int main(int argc, char *argv[]) {
     if (argc < 7) { // Ex: ./sensor <ip_ss> <porta_ss> <ip_sl> <porta_sl> <ID_SENSOR> <loc_id>
         fprintf(stderr, "Uso: %s <ip_servidor_ss> <porta_ss> <ip_servidor_sl> <porta_sl> <ID_SENSOR> <loc_id_inicial>\n", argv[0]);
-        fprintf(stderr, "Exemplo: ./sensor 127.0.0.1 60000 127.0.0.1 61000 1234567890 5\n");
+        fprintf(stderr, "Exemplo: ./sensor 127.0.0.1 60000 127.0.0.1 61000 1234567890 1\n");
         exit(EXIT_FAILURE);
     }
 
@@ -131,15 +128,14 @@ int main(int argc, char *argv[]) {
     int ss_port = atoi(argv[2]);
     char *sl_ip = argv[3];
     int sl_port = atoi(argv[4]);
-    // ID Global do Sensor
     strncpy(my_sensor_id, argv[5], sizeof(my_sensor_id) - 1);
-    my_sensor_id[sizeof(my_sensor_id) - 1] = '\0'; // Garantir terminação nula
+    my_sensor_id[sizeof(my_sensor_id) - 1] = '\0';
     initial_loc_id = atoi(argv[6]);
 
     char log_msg[150];
 
     // Validar o ID do Sensor
-    if (strlen(my_sensor_id) == 10) { // Exemplo de validação de tamanho
+    if (strlen(my_sensor_id) == 10) {
         for (size_t i = 0; i < 10; ++i) {
             if (!isdigit((unsigned char)my_sensor_id[i])) {
                 fprintf(stderr, "Erro: ID_SENSOR deve conter apenas dígitos numéricos.\n");
@@ -174,7 +170,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    char my_global_sensor_id[MAX_PIDS_LENGTH] = ""; // Limpar antes de usar
+    char my_global_sensor_id[MAX_PIDS_LENGTH] = "";
     // Checar se os IDs confirmados são iguais
     if (strcmp(id_confirmado_ss, id_confirmado_sl) != 0) {
         log_error("IDs confirmados pelos servidores SS e SL não coincidem. Encerrando.");
@@ -188,26 +184,23 @@ int main(int argc, char *argv[]) {
     }
 
     log_info("Handshake inicial com SS e SL concluído.");
-    sprintf(log_msg, "ID Global do Sensor %s confirmado por SS e SL.", my_sensor_id);
+    sprintf(log_msg, "ID do Sensor %s confirmado por SS e SL.", my_sensor_id);
     log_info(log_msg);
 
     // Loop principal do cliente para enviar comandos (Check failure, locate, diagnose, kill)
-    // Este loop precisará usar select() para monitorar STDIN e os sockets ss_fd, sl_fd
-    // para respostas assíncronas ou notificações (embora o protocolo seja maioritariamente req/res).
-    // Por enquanto, apenas um placeholder:
     log_info("Digite comandos ('check failure', 'locate <SensID>', 'diagnose <LocId>', 'kill' para sair):");
     char command_line[MAX_MSG_SIZE];
     while (fgets(command_line, sizeof(command_line), stdin) != NULL) {
         command_line[strcspn(command_line, "\n")] = 0; // Remover newline
-        char log_msg_sensor[150];           // Buffer para logs específicos do sensor
-        char msg_buffer[MAX_MSG_SIZE];      // Buffer para mensagens a serem enviadas
-        char response_buffer[MAX_MSG_SIZE]; // Buffer para respostas recebidas
+        char log_msg_sensor[150];                      // Buffer para logs específicos do sensor
+        char msg_buffer[MAX_MSG_SIZE];                 // Buffer para mensagens a serem enviadas
+        char response_buffer[MAX_MSG_SIZE];            // Buffer para respostas recebidas
 
         if (strcmp(command_line, "kill") == 0) {
             log_info("Comando 'kill' recebido. Iniciando desconexão dos servidores SS e SL...");
 
-            // 1. Desconectar do Servidor SS
-            if (ss_fd > 0 && strlen(id_confirmado_ss) > 0) { // id_confirmado_ss é o ID de Slot do SS
+            // Desconectar do Servidor SS
+            if (ss_fd > 0 && strlen(id_confirmado_ss) > 0) {
                 sprintf(log_msg_sensor, "Enviando REQ_DISCSEN (Slot ID: %s) para SS...", id_confirmado_ss);
                 log_info(log_msg_sensor);
                 build_control_message(msg_buffer, sizeof(msg_buffer), REQ_DISCSEN, id_confirmado_ss);
@@ -226,11 +219,11 @@ int main(int argc, char *argv[]) {
                             log_info(log_msg_sensor);
 
                             if (code == OK_MSG && atoi(payload) == OK_SUCCESSFUL_DISCONNECT) {
-                                log_info("SS Successful disconnect"); // Conforme PDF
+                                log_info("SS Successful disconnect");
                             } else if (code == ERROR_MSG && atoi(payload) == SENSOR_NOT_FOUND) {
-                                log_info("SS respondeu ERROR(10): Sensor not found"); // Conforme PDF
+                                log_info("SS respondeu ERROR(10): Sensor not found");
                             } else if (code == INVALID_MSG_CODE_ERROR && atoi(payload) == INVALID_MSG_CODE_ERROR) {
-                                log_info("SS respondeu ERROR(11): Invalid message code"); // Conforme PDF
+                                log_info("SS respondeu ERROR(11): Invalid message code");
                             } else {
                                 sprintf(log_msg_sensor, "SS respondeu com msg inesperada para REQ_DISCSEN: Code=%d, Payload='%s'", code, payload);
                                 log_info(log_msg_sensor);
@@ -251,8 +244,8 @@ int main(int argc, char *argv[]) {
                 log_info("Não conectado ao SS ou sem ID do SS para enviar REQ_DISCSEN.");
             }
 
-            // 2. Desconectar do Servidor SL
-            if (sl_fd > 0 && strlen(id_confirmado_sl) > 0) { // id_confirmado_sl é o ID de Slot do SL
+            // Desconectar do Servidor SL
+            if (sl_fd > 0 && strlen(id_confirmado_sl) > 0) {
                 sprintf(log_msg_sensor, "Enviando REQ_DISCSEN (Slot ID: %s) para SL...", id_confirmado_sl);
                 log_info(log_msg_sensor);
                 build_control_message(msg_buffer, sizeof(msg_buffer), REQ_DISCSEN, id_confirmado_sl);
@@ -268,9 +261,9 @@ int main(int argc, char *argv[]) {
                         char payload[MAX_MSG_SIZE];
                         if (parse_message(response_buffer, &code, payload, sizeof(payload))) {
                             if (code == OK_MSG && atoi(payload) == OK_SUCCESSFUL_DISCONNECT) {
-                                log_info("SL Successful disconnect"); // Conforme PDF
+                                log_info("SL Successful disconnect");
                             } else if (code == ERROR_MSG && atoi(payload) == SENSOR_NOT_FOUND) {
-                                log_info("SL respondeu ERROR(10): Sensor not found"); // Conforme PDF
+                                log_info("SL respondeu ERROR(10): Sensor not found");
                             } else {
                                 sprintf(log_msg_sensor, "SL respondeu com msg inesperada para REQ_DISCSEN: Code=%d, Payload='%s'", code, payload);
                                 log_info(log_msg_sensor);
@@ -291,7 +284,7 @@ int main(int argc, char *argv[]) {
             }
 
             log_info("Desconexão dos servidores solicitada. Encerrando sensor.");
-            break; // Sai do loop de comandos e permite que o programa sensor termine
+            break; // Sai do loop de comandos e permite que o sensor finalize
         } else if (strcmp(command_line, "check failure") == 0) {
             if (ss_fd > 0 && strlen(my_global_sensor_id) > 0) {
                 sprintf(log_msg_sensor, "Comando 'check failure' recebido. Enviando REQ_SENSSTATUS (ID: %s) para SS...", my_global_sensor_id);
@@ -334,10 +327,9 @@ int main(int argc, char *argv[]) {
         } else if (strncmp(command_line, "locate ", strlen("locate ")) == 0) {
             char target_sensor_global_id[MAX_PIDS_LENGTH];
             // Extrair o SensID_Global do comando
-            // sscanf pula espaços em branco por padrão após a string de formato.
             if (sscanf(command_line, "locate %49s", target_sensor_global_id) == 1) {
-                // Validar rapidamente o formato do ID (ex: 10 caracteres)
-                if (strlen(target_sensor_global_id) == 10) { // Assumindo ID Global de 10 chars
+                // Validar o formato do ID
+                if (strlen(target_sensor_global_id) == 10) {
                     if (sl_fd > 0) { // Verificar se está conectado ao SL
                         sprintf(log_msg_sensor, "Comando 'locate %s' recebido. Enviando REQ_SENSLOC para SL...", target_sensor_global_id);
                         log_info(log_msg_sensor);
@@ -358,7 +350,7 @@ int main(int argc, char *argv[]) {
                                         sprintf(log_msg_sensor, "Current sensor location: %s", payload_loc_id_str);
                                         log_info(log_msg_sensor);
                                     } else if (code == ERROR_MSG && atoi(payload_loc_id_str) == SENSOR_NOT_FOUND) {
-                                        log_info("Sensor not found"); // Conforme PDF p.11
+                                        log_info("Sensor not found");
                                     } else {
                                         sprintf(log_msg_sensor, "SL respondeu com msg inesperada para REQ_SENSLOC: Code=%d, Payload='%s'", code, payload_loc_id_str);
                                         log_info(log_msg_sensor);
@@ -384,9 +376,9 @@ int main(int argc, char *argv[]) {
             int target_loc_id;
             // Extrair o LocId do comando
             if (sscanf(command_line, "diagnose %d", &target_loc_id) == 1) {
-                // Validar LocId (1-10 conforme PDF)
+                // Validar LocId
                 if (target_loc_id >= 1 && target_loc_id <= 10) {
-                    if (sl_fd > 0 && strlen(id_confirmado_sl) > 0) { // id_confirmado_sl é o ID de Slot no SL
+                    if (sl_fd > 0 && strlen(id_confirmado_sl) > 0) {
                         sprintf(log_msg_sensor, "Comando 'diagnose %d' recebido. Enviando REQ_LOCLIST para SL...", target_loc_id);
                         log_info(log_msg_sensor);
 
@@ -415,8 +407,7 @@ int main(int argc, char *argv[]) {
                                         sprintf(log_msg_sensor, "Sensors at location %d: %s", target_loc_id, payload_sensores_str); // Conforme PDF p.11
                                         log_info(log_msg_sensor);
                                     } else if (code == ERROR_MSG && atoi(payload_sensores_str) == SENSOR_NOT_FOUND) {
-                                        // O PDF usa payload_sensores_str para o código de erro aqui.
-                                        log_info("Location not found"); // Conforme PDF p.11
+                                        log_info("Location not found");
                                     } else {
                                         sprintf(log_msg_sensor, "SL respondeu com msg inesperada para REQ_LOCLIST: Code=%d, Payload='%s'", code, payload_sensores_str);
                                         log_info(log_msg_sensor);
@@ -438,7 +429,6 @@ int main(int argc, char *argv[]) {
                 log_info("Comando 'diagnose' inválido. Uso: diagnose <LocId>");
             }
         }
-        // Adicionar outros comandos
         log_info("Digite comandos ('check failure', 'locate <SensID>', 'diagnose <LocId>', 'kill' para sair):");
     }
 

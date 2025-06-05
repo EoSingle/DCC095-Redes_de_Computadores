@@ -1,16 +1,17 @@
 #include "common.h"
-#include <string.h> // Adicionado para strlen, se já não estiver em common.h
-#include <stdio.h>  // Adicionado para snprintf, fprintf, perror, se já não estiver em common.h
 
+// Imprime uma mensagem de erro
 void log_error(const char *msg) {
-    perror(msg); // perror imprime a mensagem de erro do sistema
+    perror(msg); // perror exibe a mensagem de erro do sistema
 }
 
+// Imprime uma mensagem de informação
 void log_info(const char *msg) {
     fprintf(stdout, "[INFO] %s\n", msg);
     fflush(stdout);
 }
 
+// Constrói uma mensagem de controle no formato "código payload"
 void build_control_message(char *buffer, size_t buffer_size, int code, const char *payload) {
     if (payload != NULL && strlen(payload) > 0) {
         snprintf(buffer, buffer_size, "%d %s", code, payload);
