@@ -1,6 +1,6 @@
 # Makefile
 CC=gcc
-CFLAGS=-Wall -Wextra -g # Flags de compilação: todos os warnings, warnings extras, símbolos de debug
+CFLAGS=
 LDFLAGS=
 
 TARGET_SERVER=server

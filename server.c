@@ -604,6 +604,10 @@ int main(int argc, char *argv[]) {
 
                                     if (strlen(loc_id_str) > 0) {
                                         loc_id = atoi(loc_id_str);
+                                        if (loc_id == -1) {
+                                            // Generate random location between 1 and 10
+                                            loc_id = (rand() % 10) + 1;
+                                        }
                                         if (strlen(sensor_id) == 10) {
                                             valid = 1;
                                             sprintf(log_msg, "REQ_CONNSEN parsed: ID='%s', LocId=%d", sensor_id, loc_id);
@@ -674,6 +678,9 @@ int main(int argc, char *argv[]) {
                                     char msg_err[MAX_MSG_SIZE];
                                     build_control_message(msg_err, sizeof(msg_err), ERROR_MSG, err_payload);
                                     write(client_fd, msg_err, strlen(msg_err));
+                                    close(client_fd);
+                                    client_fds[i] = 0;
+                                    connected_clients[i].socket_fd = 0;
                                     continue;
                                 }
 
@@ -681,7 +688,20 @@ int main(int argc, char *argv[]) {
                                 connected_clients[i].location_id = loc_id;
                                 connected_clients[i].assigned_slot = i + 1;
                                 if (current_server_role == SERVER_TYPE_STATUS) {
-                                    connected_clients[i].risk_status = 0;
+                                    connected_clients[i].risk_status = rand() % 2; // Random risk status for SS
+                                    // Log the risk status
+                                    sprintf(log_msg, "Client %s added (Status%d)\n",
+                                            connected_clients[i].client_id,
+                                            connected_clients[i].risk_status);
+                                    log_info(log_msg);
+                                } else {
+                                    if (connected_clients[i].location_id == -1) {
+                                    // If location_id is -1, assign a random location between 1 and 15
+                                    connected_clients[i].location_id = (rand() % 15) + 1;
+                                    }
+                                    printf(log_msg, "Client %s added (Loc %d)\n",
+                                            connected_clients[i].client_id,
+                                            connected_clients[i].location_id);
                                 }
                                 num_connected_clients++;
 
@@ -777,6 +797,8 @@ int main(int argc, char *argv[]) {
                                                     char msg_to_client[MAX_MSG_SIZE];
                                                     if (sl_code == RES_CHECKALERT) {
                                                         sprintf(log_msg, "SL responded with RES_CHECKALERT %s", sl_payload);
+                                                        log_info(log_msg);
+                                                        sprintf(log_msg, "Sensor %s status = 1 (failure detected)", connected_clients[i].client_id);
                                                         log_info(log_msg);
                                                         build_control_message(msg_to_client, sizeof(msg_to_client), RES_SENSSTATUS, sl_payload);
                                                         write(client_fd, msg_to_client, strlen(msg_to_client));

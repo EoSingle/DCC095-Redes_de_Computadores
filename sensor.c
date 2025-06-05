@@ -1,5 +1,6 @@
 #include "common.h"
 #include <ctype.h> // For isdigit
+#include <time.h>  // For rand
 
 // ID received from the servers
 char my_sensor_id[MAX_PIDS_LENGTH] = "";
@@ -73,7 +74,7 @@ int connect_and_get_id(const char *server_type_name, const char *server_ip, int 
 
         if (parse_message(buffer, &code, received_payload, sizeof(received_payload))) {
             if (code == RES_CONNSEN) {
-                sprintf(log_msg, "%s responded with RES_CONNSEN: Code=%d, Payload='%s'", server_type_name, code, received_payload);
+                sprintf(log_msg, "%s New ID: %s", server_type_name, received_payload);
                 log_info(log_msg);
                 strncpy(id_storage, received_payload, MAX_PIDS_LENGTH - 1);
                 id_storage[MAX_PIDS_LENGTH - 1] = '\0';
@@ -85,6 +86,12 @@ int connect_and_get_id(const char *server_type_name, const char *server_ip, int 
             } else {
                 sprintf(log_msg, "%s responded with an unexpected message: Code=%d, Payload='%s'", server_type_name, code, received_payload);
                 log_info(log_msg);
+            }
+        } else if (code == ERROR_MSG) {
+            int error_code_payload = atoi(received_payload);
+            if (error_code_payload == SENSOR_LIMIT_EXCEEDED){
+                sprintf(log_msg, "%s server responded with ERROR(09): Sensor limit exceeded.", server_type_name);
+                log_error(log_msg);
             }
         } else {
             sprintf(log_msg, "Failed to parse response from %s server.", server_type_name);
@@ -105,9 +112,9 @@ int connect_and_get_id(const char *server_type_name, const char *server_ip, int 
 
 
 int main(int argc, char *argv[]) {
-    if (argc < 7) {
-        fprintf(stderr, "Usage: %s <ss_server_ip> <ss_port> <sl_server_ip> <sl_port> <SENSOR_ID> <initial_loc_id>\n", argv[0]);
-        fprintf(stderr, "Example: ./sensor 127.0.0.1 61000 127.0.0.1 62000 1234567890 1\n");
+    if (argc < 5) {
+        fprintf(stderr, "Usage: %s <ss_server_ip> <ss_port> <sl_server_ip> <sl_port>\n", argv[0]);
+        fprintf(stderr, "Example: ./sensor 127.0.0.1 61000 127.0.0.1 62000\n");
         exit(EXIT_FAILURE);
     }
 
@@ -115,9 +122,13 @@ int main(int argc, char *argv[]) {
     int ss_port = atoi(argv[2]);
     char *sl_ip = argv[3];
     int sl_port = atoi(argv[4]);
-    strncpy(my_sensor_id, argv[5], sizeof(my_sensor_id) - 1);
-    my_sensor_id[sizeof(my_sensor_id) - 1] = '\0';
-    initial_loc_id = atoi(argv[6]);
+
+    // Generate random Sensor ID (10 digits)
+    srand((unsigned int)time(NULL)); // Seed the random number generator
+    for (size_t i = 0; i < 10; ++i) {
+        my_sensor_id[i] = '0' + (rand() % 10); // Generate a random digit
+    }
+    my_sensor_id[10] = '\0'; // Null-terminate the string
 
     char log_msg[150];
 
@@ -133,7 +144,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    sprintf(log_msg, "Sensor initialized with ID: %s, LocId: %d", my_sensor_id, initial_loc_id);
+    sprintf(log_msg, "Sensor initialized with ID: %s", my_sensor_id);
     log_info(log_msg);
 
     int ss_fd = -1;
@@ -164,6 +175,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
+    log_info("OK(02)");
     log_info("Initial handshake with SS and SL completed.");
     sprintf(log_msg, "Sensor slot ID %s confirmed by both SS and SL.", confirmed_slot_id_ss);
     log_info(log_msg);
@@ -229,9 +241,20 @@ int main(int argc, char *argv[]) {
                                 int loc_id = atoi(payload);
                                 if (loc_id == -1) {
                                     log_info("Normal status reported for the sensor.");
-                                } else {
-                                    sprintf(sensor_log_msg, "Alert received from location ID: %d", loc_id);
+                                } else if (loc_id >= 1 && loc_id <= 3) {
+                                    sprintf(sensor_log_msg, "Alert received from location: %d (Norte)", loc_id);
                                     log_info(sensor_log_msg);
+                                } else if (loc_id >= 4 && loc_id <= 5) {
+                                    sprintf(sensor_log_msg, "Alert received from location: %d (Sul)", loc_id);
+                                    log_info(sensor_log_msg);
+                                } else if (loc_id >= 6 && loc_id <= 7) {
+                                    sprintf(sensor_log_msg, "Alert received from location: %d (Leste)", loc_id);
+                                    log_info(sensor_log_msg);
+                                } else if (loc_id >= 8 && loc_id <= 10) {
+                                    sprintf(sensor_log_msg, "Alert received from location: %d (Oeste)", loc_id);
+                                    log_info(sensor_log_msg);
+                                } else {
+                                    log_error("Received invalid location ID from SS.");
                                 }
                             } else {
                                 log_info("Received error or unexpected response from SS.");
