@@ -312,27 +312,18 @@ int main(int argc, char *argv[]) {
                         if (parse_message(response_buffer, &code, payload_loc_id_str, sizeof(payload_loc_id_str))) {
                             if (code == RES_SENSSTATUS) {
                                 int loc_id = atoi(payload_loc_id_str);
-                                // Imprimir conforme formato do PDF (página 10)
-                                if (loc_id == 1) sprintf(log_msg_sensor, "Alert received from location: %d (Norte)", loc_id);
-                                else if (loc_id == 2) sprintf(log_msg_sensor, "Alert received from location: %d (Norte)", loc_id); // PDF p.10 tem Norte para 1 e Sul para 2. Ajuste aqui.
-                                else if (loc_id == 3) sprintf(log_msg_sensor, "Alert received from location: %d (Norte)", loc_id); // E Leste para 3
-                                else if (loc_id == 4) sprintf(log_msg_sensor, "Alert received from location: %d (Norte)", loc_id); // E Oeste para 4
-                                // CORREÇÃO DA LÓGICA DE IMPRESSÃO DAS ÁREAS CONFORME PÁGINA 4:
-                                // Área Norte: localização 1, 2 e 3
-                                // Área Sul: localização 4 e 5
-                                // Área Leste: localização 6 e 7
-                                // Área Oeste: localização 8, 9 e 10
-                                // O exemplo da p.10 para o cliente tem uma numeração diferente da definição de áreas. Usaremos a definição da p.4.
-                                else if (loc_id >=1 && loc_id <=3) sprintf(log_msg_sensor, "Alert received from location: %d (Norte)", loc_id);
+
+                                if (loc_id >=1 && loc_id <=3) sprintf(log_msg_sensor, "Alert received from location: %d (Norte)", loc_id);
                                 else if (loc_id >=4 && loc_id <=5) sprintf(log_msg_sensor, "Alert received from location: %d (Sul)", loc_id);
                                 else if (loc_id >=6 && loc_id <=7) sprintf(log_msg_sensor, "Alert received from location: %d (Leste)", loc_id);
                                 else if (loc_id >=8 && loc_id <=10) sprintf(log_msg_sensor, "Alert received from location: %d (Oeste)", loc_id);
-                                else if (loc_id == 0) sprintf(log_msg_sensor, "Status normal reportado para o sensor (LocID: %d).", loc_id); // Interpretação para normal
+                                else if (loc_id == -1) sprintf(log_msg_sensor, "Status normal reportado para o sensor."); // Interpretação para normal
                                 else sprintf(log_msg_sensor, "Alerta recebido de localização desconhecida ou inválida: %d", loc_id);
+
                                 log_info(log_msg_sensor);
 
                             } else if (code == ERROR_MSG && atoi(payload_loc_id_str) == SENSOR_NOT_FOUND) {
-                                log_info("Sensor not found"); // Conforme PDF
+                                log_info("Sensor not found");
                             } else {
                                 sprintf(log_msg_sensor, "SS respondeu com msg inesperada para REQ_SENSSTATUS: Code=%d, Payload='%s'", code, payload_loc_id_str);
                                 log_info(log_msg_sensor);
