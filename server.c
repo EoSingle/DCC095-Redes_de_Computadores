@@ -263,7 +263,7 @@ int main(int argc, char *argv[]) {
                             p2p_current_state = P2P_DISCONNECT_REQ_SENT;
                         }
                     } else {
-                        log_info("No active P2P connection to disconnect.");
+                        log_info("No active P2P connection to disconnect. (Use 'exit' to terminate the server)");
                     }
                 } else if (strcmp(cmd_buf, "exit") == 0) {
                     log_info("'exit' command received. Shutting down server...");
@@ -582,8 +582,8 @@ int main(int argc, char *argv[]) {
                     log_info(log_msg);
 
                     if (parse_message(buffer, &code, payload, sizeof(payload))) {
-                        sprintf(log_msg, "Parsed client message: Code=%d, Payload='%s'", code, payload);
-                        log_info(log_msg);
+                        //sprintf(log_msg, "Parsed client message: Code=%d, Payload='%s'", code, payload);
+                        //log_info(log_msg);
 
                         // --- SENSOR REGISTRATION ---
                         if (code == REQ_CONNSEN) {
@@ -690,7 +690,7 @@ int main(int argc, char *argv[]) {
                                 if (current_server_role == SERVER_TYPE_STATUS) {
                                     connected_clients[i].risk_status = rand() % 2; // Random risk status for SS
                                     // Log the risk status
-                                    sprintf(log_msg, "Client %s added (Status%d)\n",
+                                    sprintf(log_msg, "Client %s added (Status%d)",
                                             connected_clients[i].client_id,
                                             connected_clients[i].risk_status);
                                     log_info(log_msg);
@@ -699,7 +699,7 @@ int main(int argc, char *argv[]) {
                                     // If location_id is -1, assign a random location between 1 and 15
                                     connected_clients[i].location_id = (rand() % 15) + 1;
                                     }
-                                    printf(log_msg, "Client %s added (Loc %d)\n",
+                                    printf(log_msg, "Client %s added (Loc %d)",
                                             connected_clients[i].client_id,
                                             connected_clients[i].location_id);
                                 }

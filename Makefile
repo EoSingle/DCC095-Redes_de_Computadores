@@ -21,7 +21,4 @@ $(TARGET_SENSOR): sensor.o $(COMMON_OBJ)
 clean:
 	rm -f *.o $(TARGET_SERVER) $(TARGET_SENSOR)
 
-# Compilar sensor e server com o comando 'make' sem parâmetros adicionais [cite: 135]
-.PHONY: all clean
-
 test: clean all

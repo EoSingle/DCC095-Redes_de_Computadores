@@ -55,7 +55,7 @@ int connect_and_get_id(const char *server_type_name, const char *server_ip, int 
 
     build_control_message(buffer, sizeof(buffer), REQ_CONNSEN, payload_for_req_connsen);
 
-    sprintf(log_msg, "Sending REQ_CONNSEN (Payload: %s) to %s", payload_for_req_connsen, server_type_name);
+    sprintf(log_msg, "Sending REQ_CONNSEN to %s", server_type_name);
     log_info(log_msg);
 
     if (write(sockfd, buffer, strlen(buffer)) < 0) {
@@ -312,8 +312,10 @@ int main(int argc, char *argv[]) {
                                 if (code == RES_LOCLIST) {
                                     sprintf(sensor_log_msg, "Sensors at location %d: [%s]", target_loc_id, payload);
                                     log_info(sensor_log_msg);
+                                } else if (code == ERROR_MSG && atoi(payload) == SENSOR_NOT_FOUND) {
+                                    log_info("No sensors found at the specified location.");
                                 } else {
-                                    log_info("Received error or unexpected response from SL (Location possibly has no sensors or is invalid).");
+                                    log_info("Received error or unexpected response from SL.");
                                 }
                             } else { log_error("Failed to parse response from SL for REQ_LOCLIST"); }
                         } else { log_error("Failed to read response from SL or disconnected"); }
